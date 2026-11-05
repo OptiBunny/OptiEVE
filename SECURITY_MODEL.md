@@ -217,6 +217,10 @@ Public-source checks reject private-runtime markers, known environment/data/key
 artifacts, deployment bindings, personal machine paths, credential patterns,
 unreviewed binaries, links and hard-linked source. These are heuristic and
 structural checks, not recognition of every possible secret or personal fact.
+Git ignore rules also reduce accidental additions of runtime state, logs,
+databases, exports and archives. They do not protect already tracked or forcibly
+added files, erase earlier history or establish an access-control boundary;
+the public-source checks and review of outgoing content remain necessary.
 The packager selects current working-tree bytes, including reviewed uncommitted
 changes, and verifies archive entries against those bytes. It excludes Git
 metadata and generated/runtime directories. Git attributes cannot silently drop
