@@ -59,7 +59,7 @@ for (const [name, mutate] of [
   ['ready on partial page', v => { v.coverage.pages = 2; v.coverage.nextPage = 2; v.coverage.kind = 'partial'; }], ['error with charts', v => v.status = 'error'], ['unavailable with zero metrics', v => { Object.assign(v, unavailableInventory()); v.summary = inventoryFixture().summary; }],
 ]) test(`inventory client rejects ${name}`, () => { const value = inventoryFixture(); mutate(value); assert.throws(() => client.inventoryAnalyticsResponse(value, selected), /incomplete response/); });
 
-test('inventory allows unknown classification, safe quantity and missing copy flags without misleading zeros', () => {
+test('inventory client preserves explicit unknown classification and legacy unknown copy counts without inventing values', () => {
   const value = inventoryFixture(); value.status = 'partial'; value.summary.unmappedTypeRecords = 1;
   Object.assign(value.types[1], { name: 'Type 35', groupId: null, groupName: 'Unmapped group', categoryId: null, categoryName: 'Unmapped category', quantity: Number.MAX_SAFE_INTEGER });
   Object.assign(value.groups[0], { records: 2, typeCount: 1 }); Object.assign(value.categories[0], { records: 2, typeCount: 1 });
@@ -159,6 +159,7 @@ test('inventory client accepts actual service projections across page, unknown, 
         data: mode === 'zero' ? [] : [{ item_id: 70000001, type_id: mode === 'unknownType' ? 9999999 : 34, location_id: 60000001, location_type: 'station', location_flag: 'Hangar', quantity: mode === 'malformed' ? -1 : 12, is_singleton: false }] };
     } });
     const result = await reader('synthetic-user', args); assert.deepEqual(plain(client.inventoryAnalyticsResponse(result, args)), plain(result), mode);
+    if (result.summary) { assert.equal(result.summary.blueprintCopyRecords, 0, mode); assert.equal(result.summary.blueprintCopyUnknownRecords, 0, mode); }
     assert(!JSON.stringify(result).includes('OMIT_PRIVATE'), mode);
   }
 });

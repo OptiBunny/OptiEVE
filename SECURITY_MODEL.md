@@ -170,7 +170,7 @@ exposes planetary reads only.
 | Personal Industry and optional public labels | Colony list reads do not load layouts or contents. Optional displayed-row enrichment allows bounded public type/skill/system IDs, not private item/container/location/player IDs. This restriction is specific to those enrichments, not the separate explicit public-name tool. |
 | Corporation asset detail workspace | Verifies the requested item in the selected asset page before custom name or coordinate lookup; does not save lookup results. |
 | Skills, wallet, orders, inventory and jobs charts | Preserve reported semantics and numeric precision. Counts, quantities, cash flow, queue dates and job states are different evidence; none alone establishes profit, completion or usable stock. |
-| Blueprint collection and reconciliation | Keep identity joins server-local, accepted pages transactional, unknown research/copy flags explicit, and independent source coverage/freshness visible. |
+| Blueprint collection and reconciliation | Keep identity joins server-local, accepted pages transactional, unknown research explicit and optional copy flags normalized under ESI’s contract, and independent source coverage/freshness visible. |
 | Manufacturing | Bind character, owner, wallet/hangar selections, stock ancestry and exclusions. Use pinned recipe provenance and explicit costs; distinguish conditional modeled economics from realized profit or funded executable jobs. |
 
 The overview/workspace and collection workflows generally share a 55-second
@@ -190,8 +190,8 @@ metadata, and account for synchronous final aggregation in the deadline.
 
 Asset-only blueprint classification uses pinned SDE category 9, including types
 without manufacturing recipes. Assets cannot recover ME, TE or remaining runs.
-Missing copy flags stay unknown; a reported non-copy flag does not prove an
-original, researchability or unlimited runs. Matching checks selected blueprint
+A false or omitted optional copy flag does not prove an original, researchability
+or unlimited runs. Matching checks selected blueprint
 fields and physical quantities, not cross-source location equivalence.
 Blueprint-only evidence is retained and conflicting matches are flagged.
 All advertised pages, matching timestamps and a deduplicated union still do not
@@ -203,6 +203,16 @@ as current resources. Missing costs, incomplete depth, stale evidence and uncert
 catalog status keep results conditional. Public market data is not proof of
 private-structure liquidity. The synthetic demo does not read connections or
 account endpoints and is suitable for development verification.
+
+ESI’s [documented optional-boolean contract](https://developers.eveonline.com/blog/esi-and-optional-booleans)
+only transmits optional boolean fields when true. The
+[dated response schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31)
+marks character/corporation order `is_buy_order` and asset `is_blueprint_copy`
+optional. After validating their specific response rows, omission means false:
+a sell order or a non-copy asset. Null and wrong-type values remain invalid.
+This is not a general missing-data default: public regional order `is_buy_order`
+is required and must still be present. Neither a non-copy flag nor asset catalog
+classification supplies missing blueprint research or usable production capacity.
 
 ### Local tooling, synchronization and public packaging
 

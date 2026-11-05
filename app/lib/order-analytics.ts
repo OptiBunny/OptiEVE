@@ -12,7 +12,7 @@ class OrderDataError extends Error {}
 const invalid = (): never => { throw new OrderDataError(); };
 const limitations = [
   'Only this returned response is included. Corporation orders use one explicit page; each load replaces the previous results. No account or order history is saved.',
-  'The personal view excludes orders explicitly marked as corporation orders. An omitted buy/sell flag has no documented default and remains Unknown; unknown-side orders are never treated as sells.',
+  'The personal view excludes orders explicitly marked as corporation orders. ESI omits optional boolean flags when false, so an omitted buy-order flag means Sell on these character/corporation endpoints.',
   'Charts count orders, not item quantities or ISK. Remaining and original quantities are shown separately per order; their difference is not established sales or fills.',
   'Reported expiry is issued time plus duration in days, normalized to UTC. A past expiry can reflect delayed data and does not prove cancellation, disappearance or completion. Dates are a snapshot, not a live countdown.',
   'Unit prices show the decimal representation of the received JSON number without further rounding. This cannot recover precision already lost before or during JSON parsing. No portfolio value, escrow total, notional, profit or wallet balance is calculated.',
@@ -91,7 +91,9 @@ function summarize(selected: Selection, response: unknown, completed: number): O
     const issuedAt = timestamp(row.issued), ends = issuedAt === null ? NaN : Date.parse(issuedAt) + row.duration * 86400000;
     if (!issuedAt || !Number.isSafeInteger(ends) || Math.abs(ends) > 8640000000000000) return invalid();
     const expiresAt = new Date(ends).toISOString(); if (expiresAt.length !== 24) return invalid();
-    orders.push({ orderId: row.order_id, typeId: row.type_id, ...typeName(row.type_id), side: row.is_buy_order === true ? 'buy' : row.is_buy_order === false ? 'sell' : 'unknown',
+    // These owner-order endpoints define is_buy_order as optional. ESI omits false
+    // optional booleans: https://developers.eveonline.com/blog/esi-and-optional-booleans
+    orders.push({ orderId: row.order_id, typeId: row.type_id, ...typeName(row.type_id), side: row.is_buy_order === true ? 'buy' : 'sell',
       unitPrice: String(row.price), remainingQuantity: row.volume_remain, originalQuantity: row.volume_total, minimumVolume: row.min_volume as number | undefined ?? null, issuedAt, durationDays: row.duration, expiresAt });
   }
   orders.sort((a, b) => a.expiresAt.localeCompare(b.expiresAt) || a.orderId - b.orderId);

@@ -28,16 +28,17 @@ function harness(options = {}) {
   } });
   return { read: mod.exports.createOrderAnalyticsReader(dependencies), validate: mod.exports.validateOrderAnalyticsArgs, calls, deadline };
 }
-test('personal response projects prices, counts all three sides, and excludes corporation orders', async () => {
+test('personal response counts omitted optional side as sell and excludes corporation orders', async () => {
   const omitted = row(70000003, { type_id: 35 }); delete omitted.is_buy_order;
   const h = harness({ result: { data: [row(), row(70000002, { is_buy_order: false }), omitted, row(70000004, { is_corporation: true, type_id: 999 })] } });
   const result = await h.read('synthetic-owner', args);
-  assert.equal(result.status, 'partial'); assert.equal(result.coverage.rows, 4); assert.equal(result.summary.orders, 3); assert.equal(result.summary.types, 2);
-  assert.equal(result.summary.buy, 1); assert.equal(result.summary.sell, 1); assert.equal(result.summary.unknownSide, 1); assert.equal(result.summary.excludedCorporationOrders, 1);
+  assert.equal(result.status, 'ready'); assert.equal(result.coverage.rows, 4); assert.equal(result.summary.orders, 3); assert.equal(result.summary.types, 2);
+  assert.equal(result.summary.buy, 1); assert.equal(result.summary.sell, 2); assert.equal(result.summary.unknownSide, 0); assert.equal(result.summary.excludedCorporationOrders, 1);
   assert.equal(result.orders[0].unitPrice, '12.34'); assert.equal(result.orders[0].expiresAt, '2026-01-04T00:00:00.000Z'); assert.equal(result.orders[0].minimumVolume, null);
   assert.deepEqual(plain(h.calls[1].input), { ...args, dataset: 'orders' }); assert(h.calls[1].signal instanceof AbortSignal);
   for (const forbidden of ['OMIT_PRIVATE', '90009999', '60000001', '70000004', 'location_id', 'issued_by', 'escrow', 'wallet_division', '"source":']) assert(!JSON.stringify(result.orders).includes(forbidden));
-  assert.match(result.limitations.join(' '), /not established sales or fills/); assert.match(result.limitations.join(' '), /no documented default/);
+  assert.match(result.limitations.join(' '), /not established sales or fills/); assert.match(result.limitations.join(' '), /omitted buy-order flag means Sell/);
+  assert.deepEqual(plain(result.orders.map(row => row.side)), ['buy', 'sell', 'sell']);
 });
 test('empty personal results and corporation-only personal results are explicit', async () => {
   for (const data of [[], [row(70000001, { is_corporation: true })]]) {
@@ -50,6 +51,19 @@ test('corporation requests preserve owner, page and role scope without personal 
   const result = await h.read('synthetic-owner', { ...corp, page: 2 });
   assert.equal(result.corporationId, 98000001); assert.equal(result.coverage.kind, 'partial'); assert.equal(result.coverage.previousPage, 1); assert.equal(result.coverage.nextPage, 3); assert.equal(result.summary.excludedCorporationOrders, 0);
   assert.deepEqual(plain(h.calls[1].input), { ...corp, page: 2, dataset: 'orders' }); assert.equal(result.scope, scopes[1]);
+});
+test('corporation order sides follow optional ESI boolean semantics after field validation', async () => {
+  const omitted = row(70000001); delete omitted.is_buy_order;
+  const result = await harness({ result: { data: [omitted, row(70000002, { is_buy_order: false }), row(70000003)] } }).read('synthetic-owner', corp);
+  assert.equal(result.status, 'ready'); assert.equal(result.summary.orders, 3);
+  assert.equal(result.summary.buy, 1); assert.equal(result.summary.sell, 2); assert.equal(result.summary.unknownSide, 0);
+  assert.deepEqual(plain(result.orders.map(row => row.side)), ['sell', 'sell', 'buy']);
+});
+test('present malformed optional order sides are rejected for both owners', async () => {
+  for (const input of [args, corp]) for (const is_buy_order of [null, 'false', 0, 1, [], {}]) {
+    const result = await harness({ result: { data: [row(70000001, { is_buy_order })] } }).read('synthetic-owner', input);
+    assert.equal(result.status, 'error'); assert.equal(result.summary, null); assert.equal(result.orders.length, 0);
+  }
 });
 test('unknown pages and page-limit coverage remain partial', async () => {
   const result = await harness({ result: { pages: null, nextPage: null, morePagesAvailable: null, pageLimitReached: true } }).read('synthetic-owner', { ...corp, page: 500 });

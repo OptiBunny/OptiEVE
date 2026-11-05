@@ -135,6 +135,14 @@ test('partial page HTTP errors and duplicates fail instead of exposing trustwort
   }
 });
 
+test('public region orders still require an explicit boolean side', async () => {
+  for (const side of ['buy_materials', 'sell_output']) for (const value of [undefined, null, 'false', 0]) {
+    const malformed = order(1, { is_buy_order: value });
+    if (value === undefined) delete malformed.is_buy_order;
+    const h = harness({ fetch: url => isOrder(url) ? orderResponse([malformed]) : undefined });
+    await assert.rejects(h.reader.quote({ ...base, side }), market.ManufacturingMarketError);
+  }
+});
 for (const override of [{ type_id: 35 }, { is_buy_order: true }, { order_id: 0 }, { volume_remain: 11 }, { min_volume: 0 }, { price: 1.234 }, { price: -1 }, { price: 1e12 + 1 }, { duration: 0 }, { issued: 'not-a-time' }, { range: 'private' }, { system_id: 30000002 }]) {
   test('malformed quote order fails safely: ' + JSON.stringify(override), async () => {
     const h = harness({ fetch: url => isOrder(url) ? orderResponse([order(1, override)]) : undefined }); await assert.rejects(h.reader.quote(base), market.ManufacturingMarketError);

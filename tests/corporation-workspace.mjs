@@ -165,16 +165,16 @@ test('new production views reject unsupported selectors before any storage or ne
   ]) { const h = harness(); await assert.rejects(h.read('synthetic-owner', input), error => error.status === 400); assert.equal(h.calls.length, 0); }
 });
 test('historical orders preserve quoted price and remaining volumes without claiming fills or profit', async () => {
-  const h = harness({ read: async args => ({ ...response(args), data: [order(1001), order(1002, { is_buy_order: true, state: 'cancelled', volume_remain: 0 })] }) });
+  const h = harness({ read: async args => ({ ...response(args), data: [order(1001), order(1002, { is_buy_order: true, state: 'cancelled', volume_remain: 0 }), order(1003, { is_buy_order: false })] }) });
   const result = await h.read('synthetic-owner', requests[5]);
-  assert.equal(result.rows[0].cells.side, 'Sell'); assert.equal(result.rows[1].cells.side, 'Buy'); assert.equal(result.rows[1].cells.state, 'cancelled');
+  assert.deepEqual(plain(result.rows.map(row => row.cells.side)), ['Sell', 'Buy', 'Sell']); assert.equal(result.rows[1].cells.state, 'cancelled');
   assert.equal(result.rows[0].cells.price, 4.25); assert.equal(result.rows[1].cells.volumeRemain, 0); assert.equal(result.rows[0].cells.volumeTotal, 100);
   assert(!JSON.stringify(result).includes('OMIT_PRIVATE_FIELDS')); assert(!JSON.stringify(result).includes('90009999'));
   assert(!Object.hasOwn(result.rows[0].cells, 'filled')); assert(!Object.hasOwn(result.rows[0].cells, 'profit')); assert.match(result.message, /up to 90 days/); assert.match(result.message, /do not prove fills/);
   assert.equal(h.calls.length, 2); assert.equal(result.rows[0].action, undefined);
 });
 test('malformed historical order fields cannot become trading conclusions', async () => {
-  for (const override of [{ type_id: 0 }, { location_id: -1 }, { wallet_division: 8 }, { volume_total: -1 }, { volume_remain: 101 }, { volume_remain: 1.5 }, { price: -1 }, { price: Infinity }, { price: '4.25' }, { state: 'filled' }, { is_buy_order: 'true' }, { issued: '2026-02-30T00:00:00Z' }]) {
+  for (const override of [{ type_id: 0 }, { location_id: -1 }, { wallet_division: 8 }, { volume_total: -1 }, { volume_remain: 101 }, { volume_remain: 1.5 }, { price: -1 }, { price: Infinity }, { price: '4.25' }, { state: 'filled' }, { is_buy_order: 'true' }, { is_buy_order: null }, { is_buy_order: 0 }, { issued: '2026-02-30T00:00:00Z' }]) {
     const result = await harness({ read: async args => ({ ...response(args), data: [order(1001, override)] }) }).read('synthetic-owner', requests[5]);
     assert.equal(result.status, 'error'); assert.equal(result.rows.length, 0); assert.equal(result.sources.length, 0);
   }

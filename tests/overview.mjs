@@ -286,7 +286,7 @@ test('missing escrow is unavailable rather than zero and expired rows are identi
   assert.equal(metric(result, 'Buy-order escrow'), undefined); assert.equal(metric(result, 'Past stated expiry'), 1); assert.match(result.message, /Escrow is unavailable/);
 });
 test('malformed orders, duplicate IDs and overflowing arithmetic cannot form totals', () => {
-  for (const invalid of [order({ price: -1 }), order({ volume_remain: 11 }), order({ is_corporation: undefined }), order({ is_buy_order: 'yes' }), order({ escrow: NaN }), order({ issued: '2026-02-30T00:00:00Z' }), order({ price: 1e13, volume_remain: 10 })]) assert.throws(() => summary.summarizeOverview('orders', [invalid], now));
+  for (const invalid of [order({ price: -1 }), order({ volume_remain: 11 }), order({ is_corporation: undefined }), order({ is_buy_order: 'yes' }), order({ is_buy_order: null }), order({ is_buy_order: 0 }), order({ escrow: NaN }), order({ issued: '2026-02-30T00:00:00Z' }), order({ price: 1e13, volume_remain: 10 })]) assert.throws(() => summary.summarizeOverview('orders', [invalid], now));
   assert.throws(() => summary.summarizeOverview('orders', [order(), order()], now));
 });
 test('industry distinguishes ready jobs from active jobs past the scheduled end', () => {
@@ -316,12 +316,13 @@ test('project response shapes and repeated identifiers fail safely', () => {
   assert.throws(() => summary.summarizeOverview('projects', { projects: [caseVariant, { ...caseVariant, id: caseVariant.id.toUpperCase() }] }, now));
 });
 
-test('orders with omitted side remain unknown and are excluded from side-specific values', () => {
-  const result = summary.summarizeOverview('orders', [order({ is_buy_order: undefined, price: 999 }), order({ order_id: 1002 }), order({ order_id: 1003, is_buy_order: true })], now);
-  assert.equal(metric(result, 'Personal orders with unknown side'), 1);
-  assert.equal(metric(result, 'Personal sell orders'), 1); assert.equal(metric(result, 'Personal buy orders'), 1);
-  assert.equal(metric(result, 'Remaining sell asking value'), 50); assert.equal(metric(result, 'Remaining buy bid value'), 50);
-  assert.equal(result.partial, true); assert.match(result.message, /omit their side/);
+test('omitted optional buy flag counts as sell and contributes to quoted asking value', () => {
+  const omitted = order({ price: 999 }); delete omitted.is_buy_order;
+  const result = summary.summarizeOverview('orders', [omitted, order({ order_id: 1002 }), order({ order_id: 1003, is_buy_order: true })], now);
+  assert.equal(metric(result, 'Personal orders with unknown side'), undefined);
+  assert.equal(metric(result, 'Personal sell orders'), 2); assert.equal(metric(result, 'Personal buy orders'), 1);
+  assert.equal(metric(result, 'Remaining sell asking value'), 5045); assert.equal(metric(result, 'Remaining buy bid value'), 50);
+  assert.equal(result.partial, undefined); assert.doesNotMatch(result.message, /omit their side/);
 });
 test('excluded corporation orders do not create unknown-side personal coverage', () => {
   const result = summary.summarizeOverview('orders', [order(), order({ order_id: 1002, is_corporation: true, is_buy_order: undefined })], now);
