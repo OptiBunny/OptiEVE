@@ -139,7 +139,7 @@ Research and colony lists also use bounded manual slices, with exact IDs, covera
 
 ## Development
 
-For a private runtime that stays in code parity with development, follow [PRIVATE_USE.md](PRIVATE_USE.md). Runtime credentials and account state belong in that separate directory or its private hosting environment.
+For a private runtime that stays in code parity with development, follow [PRIVATE_USE.md](PRIVATE_USE.md). The local folder convention is `OptiEVE-dev` for development and sibling `OptiEVE` for the private runtime; both source sync and catalog refresh use that default target. Use `--target` for another private location. Runtime credentials and account state belong in that separate directory or its private hosting environment, never in the public GitHub repository also named `OptiEVE`.
 
 The runtime is Vinext/React on Cloudflare Workers, with Cloudflare D1 storage and Sites hosting integration. It is not a standalone Next.js server.
 

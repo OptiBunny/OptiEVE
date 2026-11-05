@@ -1,10 +1,10 @@
 # Shared source, separate private runtime
 
-The development checkout supplies the code for both public distribution and private use. The private runtime is a separate sibling directory named `OptiEVE Private` by default. It starts with sanitized source and no credentials, account data, dependency installation or deployment.
+The local `OptiEVE-dev` development checkout supplies the code for both public distribution and private use. The private runtime is a separate sibling directory named `OptiEVE` by default. A newly initialized private runtime starts with sanitized source and no credentials, account data, dependency installation or deployment; updates preserve existing private state.
 
 ## Create or update the private source
 
-From the development checkout, with Node.js and Git available:
+From the `OptiEVE-dev` development checkout, with Node.js and Git available:
 
 ```sh
 node scripts/sync-private-source.mjs
@@ -12,6 +12,8 @@ node scripts/sync-private-source.mjs --check
 ```
 
 Use `--target` with a directory outside development to choose another private location. Use the same target for future sync and check commands. The default sibling location follows the development directory's parent; no personal absolute path is stored in public source.
+
+Both source sync and catalog refresh default to sibling `OptiEVE`. They do not search for or rename older private folders. If your runtime has a different name, pass its existing location with `--target`; keep the approved development manifests when moving source. For a fresh public-source clone, choose `OptiEVE-dev` as its local checkout name, or supply a separate explicit target. A source checkout named `OptiEVE` would otherwise target itself and must be rejected by the overlap guard.
 
 Sync copies the validated current source, including uncommitted changes. It uses a private manifest to identify managed files, refuses conflicting edits and removes only unchanged, previously managed source that development has deleted. The private manifest must match an approved source manifest in development's `outputs/private-sync/manifests/`; these records contain generic source filenames and hashes, with no private data or target paths. Keep those records when moving the development directory. Missing or altered records stop the sync rather than authorizing deletion.
 
@@ -23,7 +25,7 @@ The private copy has no copied Git history or remote. Its `.eve-private/` marker
 
 Start the private-use chat with:
 
-> Read AGENTS.md and PRIVATE_USE.md. Use the sibling OptiEVE Private folder as the runtime, keep this development folder source-only, and preserve code parity through the provided sync command. Set up only the private connection state needed for EVE access. Use the established development PR workflow for repository changes; do not initialize Git in this runtime.
+> Read AGENTS.md and PRIVATE_USE.md. Use the sibling OptiEVE folder as the private runtime and OptiEVE-dev as canonical development. Verify the folder roles before running commands, keep development source-only, and preserve code parity through the provided sync command. Set up only the private connection state needed for EVE access. Use the established development PR workflow for repository changes; do not initialize Git in the private runtime.
 
 The runtime chat should install dependencies and build inside the private directory. Keep credentials in the private environment or hosting secret store, never in source or chat messages. Keep any private deployment identity in that runtime's configuration. Both source folders carry the same instructions.
 
@@ -43,6 +45,8 @@ This is a command-driven workflow, not a background watcher. If another process 
 public source. Both keep the complete sanitized source layout, including tests,
 scripts and documentation. The private runtime remains Git-free. Follow the
 [PR rules in AGENTS.md](AGENTS.md#github-pull-requests).
+The public GitHub repository name `OptiEVE` does not make the local private
+`OptiEVE` folder a publication input; use sanitized development or Git staging.
 
 1. Make the code-only change in canonical development with synthetic data. Run
    the public-source check and relevant validation, then the guarded private sync

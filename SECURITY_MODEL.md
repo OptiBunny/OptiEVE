@@ -238,7 +238,10 @@ its approved development-side record. It rejects overlaps, unsafe links and
 conflicting private source edits; a private manifest alone cannot authorize
 deletion. It removes only unchanged previously managed source that development
 deleted, preserves unmanaged private runtime files, and intentionally retains the
-private hosting project ID. Locks, staging, rechecks and final verification do
+private hosting project ID. Source sync and catalog refresh default from local
+`OptiEVE-dev` to sibling private `OptiEVE`; explicit targets remain subject to the
+same guards. Folder names do not establish trust or authorize adopting a nonempty
+unregistered destination. Locks, staging, rechecks and final verification do
 not make the entire tree an atomic transaction: a filesystem failure can leave
 a partial update. Stop and reconcile instead of force-copying or reconstructing
 missing deletion authority. A successful check proves managed-source parity,

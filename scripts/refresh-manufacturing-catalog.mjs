@@ -134,7 +134,7 @@ export async function refreshCatalog(options, operations = {}) {
   const report = operations.report ?? (message => console.log(message));
   try {
     const sourceRoot = realPublicDirectory(options.sourceRoot);
-    const targetRoot = resolve(options.targetRoot ?? join(dirname(sourceRoot), 'OptiEVE Private'));
+    const targetRoot = resolve(options.targetRoot ?? join(dirname(sourceRoot), 'OptiEVE'));
     if (overlaps(sourceRoot, targetRoot)) throw Error('Private sync target must be separate from development');
     const entries = requirePublicSource(sourceRoot), originalSnapshot = snapshot(entries);
     const originalEntry = entries.find(entry => entry.name === catalogName);
