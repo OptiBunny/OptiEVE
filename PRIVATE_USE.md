@@ -23,7 +23,7 @@ The private copy has no copied Git history or remote. Its `.eve-private/` marker
 
 Start the private-use chat with:
 
-> Read AGENTS.md and PRIVATE_USE.md. Use the sibling OptiEVE Private folder as the runtime, keep this development folder source-only, and preserve code parity through the provided sync command. Set up only the private connection state needed for EVE access. Do not create a GitHub repository.
+> Read AGENTS.md and PRIVATE_USE.md. Use the sibling OptiEVE Private folder as the runtime, keep this development folder source-only, and preserve code parity through the provided sync command. Set up only the private connection state needed for EVE access. Use the established development PR workflow for repository changes; do not initialize Git in this runtime.
 
 The runtime chat should install dependencies and build inside the private directory. Keep credentials in the private environment or hosting secret store, never in source or chat messages. Keep any private deployment identity in that runtime's configuration. Both source folders carry the same instructions.
 
@@ -36,6 +36,49 @@ Completed development changes must be checked, synced to the private source and 
 When a private instance is running, finish the required install/build/migration/restart or authorized deployment steps there and verify it is serving the updated version. Preserve the existing encryption key and database. A code hash match alone is not proof that a running deployment has updated.
 
 This is a command-driven workflow, not a background watcher. If another process or chat has changed private code, stop and reconcile the conflict instead of overwriting it. Report any pending runtime update honestly.
+
+## GitHub PR preparation
+
+`OptiEVE-dev` is the canonical development repository; `OptiEVE` receives reviewed
+public source. Both keep the complete sanitized source layout, including tests,
+scripts and documentation. The private runtime remains Git-free. Follow the
+[PR rules in AGENTS.md](AGENTS.md#github-pull-requests).
+
+1. Make the code-only change in canonical development with synthetic data. Run
+   the public-source check and relevant validation, then the guarded private sync
+   and parity check described above. Preserve the approved local sync manifests;
+   they are deliberately excluded from repository publication.
+2. Use a sanitized Git checkout whose history is based on the current
+   `OptiEVE-dev` remote `main`. If the canonical local checkout has older or
+   unrelated history, leave its files, index, refs and remotes intact and use a
+   separate staging checkout. Compare the remote base with the canonical source
+   baseline before transferring changes; reconcile remote changes and local edits
+   explicitly rather than replacing either tree or treating absence as deletion.
+   Use the last aligned source snapshot as the baseline, not the canonical
+   checkout's older Git diff, so accepted remote-only changes are not reverted.
+   Apply any reconciled source changes back to canonical development and repeat
+   the relevant validation and guarded sync before recording final PR evidence.
+3. Create `codex/<topic>-YYYYMMDD` from that current remote base and transfer only
+   the reviewed source delta. Preserve exact file bytes and verify the staged
+   diff, including each deliberate deletion. Do not copy `.git`, private
+   environments, runtime files, outputs or local manifests, and do not use
+   force-push or history rewriting to join old histories.
+4. Push the feature branch and open its PR into `main`. Describe the behavior,
+   validation and remaining limits. Record the current head commit for checks and
+   both code and security reviews. Resolve findings and obtain reviews again
+   after changes, including conflict resolution; do not describe pending review
+   as a pass. Use ordinary merge commits unless the user requests another strategy.
+5. After development source is accepted, prepare a separate sanitized promotion
+   PR from the public repository's current `main` and link the two PRs. Review
+   that exact diff and introduced history; never publish the private runtime or
+   carry unrelated local history into either repository. Verify source parity
+   against the accepted result and report any unresolved drift.
+
+PRs and merges do not install dependencies, migrate a database, restart a runtime,
+deploy the private app or publish a release. Follow the existing authorization and
+runtime-update rules for those actions. Documentation-only updates need link and
+source/parity validation, not an application rebuild or live account read. This
+workflow does not install CI, branch protection, auto-merge or background sync.
 
 ## Retention
 

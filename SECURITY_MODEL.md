@@ -223,6 +223,16 @@ metadata and generated/runtime directories. Git attributes cannot silently drop
 or rewrite the checked package selection. Review actual ZIP contents and Git
 history separately; a checksum establishes identity, not authenticity or safety.
 
+GitHub changes use dated `codex/` branches from current remote `main` and PRs,
+with code and security review evidence tied to the current head commit. Public
+promotion is a separate linked, sanitized PR after development acceptance.
+When canonical local history differs from the published baseline, separate Git
+staging carries only the reviewed source delta; canonical source, Git state and
+approved sync manifests remain intact. This review convention is not itself
+configured CI, branch protection or auto-merge, and a merge does not authorize
+runtime deployment, broader EVE access or game writes. See the
+[PR handoff workflow](PRIVATE_USE.md#github-pr-preparation).
+
 Private sync is one-way and uses validated source, a private source manifest and
 its approved development-side record. It rejects overlaps, unsafe links and
 conflicting private source edits; a private manifest alone cannot authorize

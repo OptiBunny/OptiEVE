@@ -26,6 +26,35 @@ These documents describe requirements and reviewed controls, not proof of safety
 - Source parity does not prove running-version parity. When the private runtime is configured, account for dependency changes, migrations, rebuilding and restart/redeployment, then verify the running version. Coordinate with the private-use chat before disrupting its process. Report any pending runtime update explicitly.
 - No background synchronization or deployment service is installed. These commands and completion rules apply whenever work is performed; do not imply that idle chats automatically update each other.
 
+## GitHub pull requests
+
+- Use `OptiEVE-dev` for canonical development and `OptiEVE` for reviewed public
+  source. Both repositories keep the complete sanitized source layout; the
+  private runtime stays Git-free and never becomes a publication input.
+- Base each development branch on the current `OptiEVE-dev` `main`, name it
+  `codex/<topic>-YYYYMMDD`, and open a PR into `main`. Push feature branches;
+  do not push changes directly to `main`. Use ordinary merge commits unless the
+  user requests a different merge strategy.
+- Tie validation evidence and both code and security review results to the
+  current PR head commit. Wait for those reviews, resolve actionable findings,
+  and request review again after changes. Keep pending or unavailable reviews
+  explicit; a bot comment is review evidence, not proof of configured CI or
+  branch protection. Reuse checks only when their relevant inputs are unchanged.
+- Promote accepted development source through a separate reviewed, sanitized PR
+  into the public repository's current `main`; link the related PRs. Review the
+  actual public diff and outgoing bytes, including history introduced by the PR.
+  A private repository is not a place for personal settings or runtime data.
+- If the local canonical checkout's history predates or differs from the
+  published baseline, use separate sanitized Git staging based on the remote
+  history. Reconcile source differences explicitly and transfer only the reviewed
+  delta. Preserve the canonical files, Git state and approved sync manifests;
+  never force-push, rewrite history or mirror folders to reconcile them. Follow
+  [PRIVATE_USE.md](PRIVATE_USE.md#github-pr-preparation) for the handoff steps.
+- Preserve the checks, guarded private sync and publication authorization above.
+  A merge does not deploy the private app, publish a release, expand EVE grants or
+  authorize game writes. No automatic sync, auto-merge, CI or branch protection
+  is established merely by this convention.
+
 ## Minimum private data
 
 - Keep only configuration and connection state needed for the authorized EVE features: private origin/hosting/database settings, the token-encryption key, EVE Client ID, encrypted tokens, necessary character/user/scope/expiry metadata and short-lived OAuth state.
