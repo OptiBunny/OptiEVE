@@ -1,0 +1,23 @@
+Public EVE Online manufacturing catalog
+
+The accompanying JSON is a reduced, versioned projection of CCP Games' official
+EVE Online Static Data Export. It contains published inventory names/categories
+and published blueprint manufacturing materials, products, skill requirements
+and base activity times. It contains no account data or private preferences.
+
+Source and automation documentation:
+https://developers.eveonline.com/docs/services/static-data/
+https://developers.eveonline.com/static-data/
+
+The exact build, release date, official archive URL, archive SHA256 and selected
+source-file SHA256 values are recorded inside the JSON. Refresh using the
+repository's update-manufacturing-catalog script, review the result, and rebuild.
+Runtime calls may check the official latest-build manifest; they never replace
+the pinned catalog or download the complete SDE automatically.
+
+EVE Online and the EVE logo are the registered trademarks of CCP hf. All rights
+are reserved worldwide. Other trademarks are the property of their respective
+owners. EVE Online, the EVE logo, EVE and all associated logos and designs are
+the intellectual property of CCP hf. This project is not endorsed by CCP.
+This notice does not grant a license to CCP intellectual property or change
+the repository's licensing terms.
