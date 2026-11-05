@@ -40,7 +40,7 @@ function fixture(t, extra = {}, { gitBacked = true } = {}) {
     rmSync(temporary, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
   const git = (args, input) => execFileSync('git', [
-    '-c', 'init.templateDir=', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false',
+    '-c', 'init.templateDir=', '-c', 'core.excludesFile=', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false',
     '-c', 'user.name=Source Test', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false',
     ...args,
   ], { cwd: root, env: gitEnvironment, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 4 * 1024 * 1024 });
@@ -77,6 +77,58 @@ function assertBlocked(root, pattern) {
   assert.throws(() => requirePublicSource(root), /Public-source check failed/);
   assert.throws(() => createPublicArchive(root), /Public-source check failed/);
 }
+
+test('repository ignore rules exclude local artifacts while retaining authored source and assets', t => {
+  const repositoryIgnore = readFileSync(new URL('../.gitignore', import.meta.url));
+  const f = fixture(t, { '.gitignore': repositoryIgnore });
+  const privatePaths = [
+    '.env', '.env.local', '.dev.vars', 'nested/.env.example',
+    'node_modules/package/index.js', 'nested/node_modules/package/index.js',
+    'nested/.eve-private/state.json',
+    '.wrangler/state.json', 'nested/.wrangler/state.json',
+    '.sites-runtime/config.json', 'nested/.sites-runtime/config.json',
+    'debug.log', 'nested/request.log', 'network.har', 'nested/network.har',
+    'state.sqlite', 'nested/state.sqlite3', 'state.db',
+    'state.sqlite-wal', 'state.sqlite-shm', 'state.sqlite3-wal', 'state.sqlite3-shm',
+    'state.db-wal', 'state.db-shm',
+    'source.zip', 'nested/source.7z', 'source.rar', 'source.tar', 'source.tgz',
+    'source.gz', 'source.bz2', 'source.xz', 'source.zst', 'file.bak', 'nested/file.backup',
+    'orders.xlsx', 'orders.xls', 'orders.xlsm', 'orders.ods', 'orders.csv', 'orders.tsv',
+    'private.pem', 'private.key', 'private.p12', 'private.pfx', 'private.kdbx', 'Thumbs.db',
+  ];
+  const authored = {
+    '.env.example': 'EVE_SITE_ORIGIN=https://optieve.example\nEVE_TOKEN_KEY=\n',
+    'app/source.ts': 'export const synthetic = true;\n',
+    'app/data/catalog.json': '{"synthetic":true}\n',
+    'drizzle/0000_schema.sql': 'CREATE TABLE synthetic (id INTEGER);\n',
+    'public/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
+    'vendor/library/LICENSE': 'Synthetic fixture license\n',
+    'vendor/library/NOTICE': 'Synthetic fixture attribution\n',
+    'pnpm-lock.yaml': 'lockfileVersion: 9\n',
+    'README.md': 'Synthetic source instructions\n',
+  };
+  for (const name of privatePaths) f.write(name, 'Synthetic local artifact\n');
+  for (const [name, content] of Object.entries(authored)) f.write(name, content);
+  const ignored = f.git(['check-ignore', '--no-index', '-z', '--stdin'], [...privatePaths, ...Object.keys(authored)].join('\0') + '\0');
+  assert.deepEqual(ignored.split('\0').filter(Boolean).sort(), [...privatePaths].sort());
+  f.git(['add', '--all']);
+  const wanted = { '.gitignore': repositoryIgnore, '.openai/hosting.json': manifest, ...authored };
+  assert.deepEqual(f.git(['ls-files', '-z']).split('\0').filter(Boolean).sort(), Object.keys(wanted).sort());
+  assertExactArchive(createPublicArchive(f.root), wanted);
+  for (const name of privatePaths) assert.equal(readFileSync(join(f.root, name), 'utf8'), 'Synthetic local artifact\n');
+  f.write('.eve-private/state.json', 'Synthetic private runtime marker\n');
+  assert.equal(f.git(['check-ignore', '--no-index', '.eve-private/state.json']).trim(), '.eve-private/state.json');
+  assertBlocked(f.root, /Private runtime/);
+  assert.equal(readFileSync(join(f.root, '.eve-private/state.json'), 'utf8'), 'Synthetic private runtime marker\n');
+});
+
+test('force-tracking an ignored local artifact still fails public-source checks and packaging', t => {
+  const f = fixture(t, { '.gitignore': readFileSync(new URL('../.gitignore', import.meta.url)) });
+  f.write('debug.log', 'Synthetic local diagnostic\n');
+  f.git(['add', '--force', '--', 'debug.log']);
+  assertBlocked(f.root, /private data|archive/);
+  assert.equal(readFileSync(join(f.root, 'debug.log'), 'utf8'), 'Synthetic local diagnostic\n');
+});
 
 test('exports current clean bytes and deletions instead of sensitive HEAD or index bytes', t => {
   const secret = dummyCredential();
