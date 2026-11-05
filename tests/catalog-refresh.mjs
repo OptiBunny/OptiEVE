@@ -189,6 +189,21 @@ test('apply replaces only the reviewed catalog after validation, then syncs and 
   assert.deepEqual(readdirSync(join(f.sourceRoot, 'app/data')), ['manufacturing-catalog.json']);
 });
 
+test('catalog apply defaults both guarded sync calls to sibling OptiEVE', async t => {
+  const f = fixture(t);
+  delete f.options.targetRoot;
+  const result = await refreshCatalog({ ...f.options, apply: true }, f.operations);
+  assert.equal(result.privateInSync, true);
+  assert.equal(f.synchronizations.length, 2);
+  for (const [source, target] of f.synchronizations) {
+    assert.equal(source, f.sourceRoot);
+    assert.equal(target, join(f.temporary, 'OptiEVE'));
+  }
+  assert.equal(f.synchronizations[0][2], undefined);
+  assert.deepEqual(f.synchronizations[1][2], { checkOnly: true });
+  assert.equal(lstatSync(join(f.temporary, 'OptiEVE Private'), { throwIfNoEntry: false }), undefined);
+});
+
 test('unchanged semantics/provenance preserve original bytes and still verify private parity on apply', async t => {
   const f = fixture(t);
   f.operations.stage = ({ stagedCatalog }) => writeFileSync(stagedCatalog, JSON.stringify(catalog(), null, 2));

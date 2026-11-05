@@ -236,7 +236,7 @@ export function syncPrivateSource(sourceRoot, targetRoot, { checkOnly = false } 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-    let targetRoot = join(dirname(sourceRoot), 'OptiEVE Private');
+    let targetRoot = join(dirname(sourceRoot), 'OptiEVE');
     let checkOnly = false;
     const args = process.argv.slice(2);
     for (let index = 0; index < args.length; index++) {

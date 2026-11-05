@@ -11,8 +11,8 @@ These documents describe requirements and reviewed controls, not proof of safety
 ## Roles and boundaries
 
 - Keep one canonical, sanitized development source. A sibling private runtime receives the same application code through `scripts/sync-private-source.mjs`.
-- This checkout is for development. A copy containing `.eve-private/` is a private runtime. A separate chat using this project must switch its working directory to the private runtime before installing, running, configuring credentials, or reading live account data.
-- The default private directory is the sibling `OptiEVE Private`. A different location can be supplied with `--target`. Keep it outside the development directory; do not put it under outputs or link it into this checkout.
+- The local `OptiEVE-dev` checkout is for development. A copy containing `.eve-private/` is a private runtime. A separate chat using this project must switch its working directory to the private runtime before installing, running, configuring credentials, or reading live account data.
+- The default private directory is the sibling `OptiEVE`, for both source sync and catalog refresh. A different location can be supplied with `--target`. Keep it outside the development directory; do not put it under outputs or link it into this checkout. A source checkout also named `OptiEVE` must use a different explicit target; the overlap guard must refuse self-sync.
 - Both chats may access the filesystem; folder separation and these rules are an operating convention, not an access-control boundary. Keep live EVE results and credentials in the private-use chat, out of development messages and artifacts.
 - Do not create a GitHub repository, push, publish a release, or deploy until the user requests that action. Source in every future repository, including development repositories, must be free of personal information and runtime data.
 
@@ -31,6 +31,8 @@ These documents describe requirements and reviewed controls, not proof of safety
 - Use `OptiEVE-dev` for canonical development and `OptiEVE` for reviewed public
   source. Both repositories keep the complete sanitized source layout; the
   private runtime stays Git-free and never becomes a publication input.
+  These GitHub repository names do not change the local folder roles: local
+  `OptiEVE` is the private runtime, not a public-source checkout.
 - Base each development branch on the current `OptiEVE-dev` `main`, name it
   `codex/<topic>-YYYYMMDD`, and open a PR into `main`. Push feature branches;
   do not push changes directly to `main`. Use ordinary merge commits unless the

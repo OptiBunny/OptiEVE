@@ -24,9 +24,9 @@ function inside(parent, child) {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-function fixture(t, extra = {}) {
+function fixture(t, extra = {}, sourceName = 'source') {
   const temporary = mkdtempSync(join(tmpdir(), prefix));
-  const source = join(temporary, 'source');
+  const source = join(temporary, sourceName);
   const target = join(temporary, 'private');
   const links = [];
   mkdirSync(source);
@@ -240,6 +240,50 @@ test('check-only parity and source drift leave all destination files and timesta
   assert.equal(syncPrivateSource(f.source, f.target, { checkOnly: true }).inSync, false);
   assert.deepEqual(snapshot(f.target), before);
   assert.equal(existsSync(join(f.temporary, `.${basename(f.target)}.source-sync.lock`)), false);
+});
+
+test('the CLI defaults from OptiEVE-dev to sibling OptiEVE regardless of cwd and preserves explicit targets', t => {
+  const f = fixture(t, {}, 'OptiEVE-dev');
+  for (const name of ['public-source.mjs', 'sync-private-source.mjs']) {
+    f.write(f.source, `scripts/${name}`, readFileSync(new URL(`../scripts/${name}`, import.meta.url)));
+  }
+  const run = (...args) => spawnSync(process.execPath, [join(f.source, 'scripts/sync-private-source.mjs'), ...args], {
+    cwd: f.temporary, env: gitEnvironment, encoding: 'utf8', windowsHide: true,
+  });
+  const target = join(f.temporary, 'OptiEVE');
+  const missing = run('--check');
+  assert.equal(missing.status, 1);
+  assert.equal(existsSync(target), false);
+  const initialized = run();
+  assert.equal(initialized.status, 0, initialized.stderr);
+  assert.deepEqual(readFileSync(join(target, 'app/main.ts')), readFileSync(join(f.source, 'app/main.ts')));
+  assert.equal(existsSync(join(target, marker)), true);
+  assert.equal(existsSync(join(target, '.git')), false);
+  assert.equal(existsSync(join(f.temporary, 'OptiEVE Private')), false);
+  const before = snapshot(target);
+  const matching = run('--check');
+  assert.equal(matching.status, 0, matching.stderr);
+  assert.match(matching.stdout, /PASS/);
+  assert.deepEqual(snapshot(target), before);
+  const overridden = run('--target', f.target);
+  assert.equal(overridden.status, 0, overridden.stderr);
+  assert.equal(existsSync(join(f.target, marker)), true);
+  assert.deepEqual(snapshot(target), before);
+  assert.equal(run('--target', f.target, '--check').status, 0);
+});
+
+test('a source checkout named OptiEVE refuses its default self-target without changing files', t => {
+  const f = fixture(t, {}, 'OptiEVE');
+  for (const name of ['public-source.mjs', 'sync-private-source.mjs']) {
+    f.write(f.source, `scripts/${name}`, readFileSync(new URL(`../scripts/${name}`, import.meta.url)));
+  }
+  const before = snapshot(f.temporary);
+  const result = spawnSync(process.execPath, [join(f.source, 'scripts/sync-private-source.mjs')], {
+    cwd: f.temporary, env: gitEnvironment, encoding: 'utf8', windowsHide: true,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /overlap/i);
+  assert.deepEqual(snapshot(f.temporary), before);
 });
 
 test('the check-only CLI reports missing, matching, and stale source without changing the private copy', t => {
