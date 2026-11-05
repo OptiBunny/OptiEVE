@@ -19,7 +19,10 @@ const limit = 50000, pageLimit = 50;
 const record = (value: unknown): value is Raw => value !== null && typeof value === 'object' && !Array.isArray(value);
 const id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const assetFields = ['type_id', 'quantity', 'is_singleton', 'is_blueprint_copy', 'location_id', 'location_type', 'location_flag'] as const;
-const signature = (row: Raw) => assetFields.map(field => row[field]);
+// ESI optional booleans are false when omitted. Preserve malformed present values
+// in signatures so duplicate normalization cannot hide an invalid asset row.
+// https://developers.eveonline.com/blog/esi-and-optional-booleans
+const signature = (row: Raw) => assetFields.map(field => field === 'is_blueprint_copy' && row[field] === undefined ? false : row[field]);
 const same = (left: unknown[], right: unknown[]) => left.every((value, index) => Object.is(value, right[index]));
 const progress = (): BlueprintCollectionProgress => ({ pagesRead: 0, pagesExpected: null, rowsReceived: 0, uniqueRecords: 0, duplicateRecords: 0, pageLimit, rowLimit: limit });
 const unknownFreshness = (): BlueprintAnalytics['freshness'] => ({ state: 'unknown', retrievedAt: null, cacheExpires: null, lastModified: null });
@@ -27,9 +30,9 @@ const limitations = [
   'Two bounded read-only feeds are reconciled by item identifier in server request memory. Identifiers, locations, location flags and non-blueprint asset rows never leave this projection or enter a history store.',
   'The shared load has a 55-second deadline, at most 50 pages and 50,000 raw rows per feed, and at most 50,000 distinct blueprint records in the union. Reads are sequential without retries; a page exceeding a budget is excluded in full.',
   'An asset-only record is identified as a blueprint only by category 9 in the pinned public SDE. Unknown catalog types and contradictory copy flags on known non-blueprints remain unclassified, not invented holdings.',
-  'Asset-only blueprint records have reported quantities and optional copy flags, but no research efficiency or remaining runs. Missing flags mean unknown. A false flag means reported not-copy, not researched original or guaranteed usable stock.',
+  'Asset-only blueprint records have reported quantities and optional copy flags, but no research efficiency or remaining runs. ESI omits optional false flags. Absent or false means not a copy, not researched original or guaranteed usable stock.',
   'Blueprint endpoint records are retained even when absent from assets. Matching item IDs count once; contradictory type, copy flag, singleton or physical quantity is marked as a source conflict and the blueprint endpoint evidence is retained separately.',
-  'A compatible match compares only item type, physical quantity, singleton state and any reported copy flag. Cross-source locations are not compared or verified; matching does not establish location consistency or availability.',
+  'A compatible match compares only item type, physical quantity, singleton state and the copy flag, with an omitted optional flag interpreted as false. Cross-source locations are not compared or verified; matching does not establish location consistency or availability.',
   'The two endpoints have independent caches and timestamps. Agreement is not an atomic inventory snapshot, and absence from either feed is not proof of disposal. All advertised pages still do not guarantee all owned blueprints or recover missing ME, TE or copy runs.',
   'Blueprint endpoint ME/TE, kind and run charts cover only its accepted records. Reconciled type and overlap charts count distinct records, not physical blueprint units, production capacity, asset value or profit.',
   'Public type names and classifications use the pinned catalog without extra names, locations, containers or jobs queries. All results remain in memory for the current load and clear when the owner changes or the view closes.',
@@ -164,7 +167,7 @@ export function createBlueprintReconciliationReader(dependencies: Dependencies) 
         const match = identities.get(itemId), typeId = row.type_id as number;
         if (match) {
           const blueprint = match.blueprint;
-          const mismatch = blueprint.typeId !== typeId || blueprint.units !== row.quantity || row.is_blueprint_copy !== undefined && row.is_blueprint_copy !== (blueprint.kind === 'copy') ||
+          const mismatch = blueprint.typeId !== typeId || blueprint.units !== row.quantity || (row.is_blueprint_copy === true) !== (blueprint.kind === 'copy') ||
             row.is_singleton !== (blueprint.kind !== 'original_stack');
           matches.push({ row: blueprint.row, status: mismatch ? 'conflict' : 'matched' }); continue;
         }
@@ -174,7 +177,7 @@ export function createBlueprintReconciliationReader(dependencies: Dependencies) 
         if (item.categoryId !== 9) { other++; continue; }
         const name = item.name;
         if (typeof name !== 'string' || !name || name.length > 512 || name.trim() !== name || /[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(name)) { unknown++; continue; }
-        additions.push({ row: assetsOnly.length + additions.length + 1, typeId, name, catalogMapped: true, copyStatus: row.is_blueprint_copy === true ? 'copy' : row.is_blueprint_copy === false ? 'not_copy' : 'unknown', quantity: row.quantity as number, isSingleton: row.is_singleton as boolean });
+        additions.push({ row: assetsOnly.length + additions.length + 1, typeId, name, catalogMapped: true, copyStatus: row.is_blueprint_copy === true ? 'copy' : 'not_copy', quantity: row.quantity as number, isSingleton: row.is_singleton as boolean });
       }
       if (blueprints.blueprints.length + assetsOnly.length + additions.length > limit) { stopReason = 'result_limit'; failedPage = page; break; }
       if (signal.aborted || now() >= deadlineAt) { stopReason = stop(); failedPage = page; break; }

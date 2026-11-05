@@ -49,15 +49,29 @@ test('one inventory page counts records by category/group/location and quantitie
   assert.match(result.limitations.join(' '), /not physical item units/); assert.match(result.limitations.join(' '), /net worth/);
 });
 
-test('unmapped published catalog types remain explicit and missing copy flags are unknown', async () => {
+test('unmapped published catalog types remain explicit while omitted optional copy flags mean false', async () => {
   const omitted = row(70000001, 999999999, 8); delete omitted.is_blueprint_copy;
   const result = await harness({ result: { data: [omitted, row(70000002, 999999999, 3, { is_singleton: true, is_blueprint_copy: true }), row(70000003, 34, 1)] } }).read('synthetic-owner', args);
   assert.equal(result.status, 'partial'); assert.equal(result.summary.unmappedTypeRecords, 2);
-  assert.equal(result.summary.blueprintCopyRecords, 1); assert.equal(result.summary.blueprintCopyUnknownRecords, 1);
+  assert.equal(result.summary.blueprintCopyRecords, 1); assert.equal(result.summary.blueprintCopyUnknownRecords, 0);
   assert.equal(result.types[0].name, 'Type 999999999'); assert.equal(result.types[0].groupId, null); assert.equal(result.types[0].categoryId, null);
-  assert.equal(result.types[0].quantity, 11); assert.equal(result.types[0].blueprintCopyUnknownRecords, 1);
+  assert.equal(result.types[0].quantity, 11); assert.equal(result.types[0].blueprintCopyUnknownRecords, 0);
   assert.equal(result.categories[0].name, 'Unmapped category'); assert.equal(result.groups[0].name, 'Unmapped group');
   assert.match(result.message, /absent from the pinned public catalog/);
+});
+
+test('character and corporation assets interpret omitted copy flags as false without inferring blueprint originals', async () => {
+  for (const selected of [args, corporation]) {
+    const omitted = row(70000001, 34, 8); delete omitted.is_blueprint_copy;
+    const h = harness({ result: { data: [omitted, row(70000002, 34, 3, { is_blueprint_copy: false }), row(70000003, 34, 1, { is_blueprint_copy: true })] } });
+    const result = await h.read('synthetic-owner', selected);
+    assert.equal(result.summary.records, 3); assert.equal(result.summary.blueprintCopyRecords, 1); assert.equal(result.summary.blueprintCopyUnknownRecords, 0);
+    assert.equal(result.types[0].quantity, 12); assert.equal(result.types[0].blueprintCopyRecords, 1); assert.equal(result.types[0].blueprintCopyUnknownRecords, 0);
+    const explicit = await harness({ result: { data: [{ ...omitted, is_blueprint_copy: false }, row(70000002, 34, 3, { is_blueprint_copy: false }), row(70000003, 34, 1, { is_blueprint_copy: true })] } }).read('synthetic-owner', selected);
+    assert.deepEqual(plain(result), plain(explicit));
+    assert.match(result.limitations.join(' '), /not proof of an original blueprint/);
+    for (const key of ['originals', 'materialEfficiency', 'timeEfficiency', 'runs']) assert(!Object.hasOwn(result.types[0], key));
+  }
 });
 
 test('empty returned list and explicitly reported zero quantities remain distinct from failure', async () => {
@@ -107,7 +121,7 @@ test('malformed, duplicate, oversized and unsafe quantities reject the entire pa
   const invalidRows = [
     [row(1), row(1)], Array.from({ length: 1001 }, (_, i) => row(i + 1)), [row(1, 34, -1)], [row(1, 34, 1.5)], [row(1, 34, Number.MAX_SAFE_INTEGER), row(2, 34, 1)],
     [row(1, 34, 1, { item_id: '1' })], [row(1, 34, 1, { type_id: 0 })], [row(1, 34, 1, { location_id: Number.MAX_SAFE_INTEGER + 1 })],
-    [row(1, 34, 1, { location_type: 'secret_location' })], [row(1, 34, 1, { is_singleton: null })], [row(1, 34, 1, { is_blueprint_copy: null })],
+    [row(1, 34, 1, { location_type: 'secret_location' })], [row(1, 34, 1, { is_singleton: null })], [row(1, 34, 1, { is_blueprint_copy: null })], [row(1, 34, 1, { is_blueprint_copy: 'false' })], [row(1, 34, 1, { is_blueprint_copy: 0 })],
     [row(1, 34, 1, { location_flag: '' })], [row(1, 34, 1, { location_flag: 'x'.repeat(81) })], [row(1, 34, 1, { location_flag: 'bad\nflag' })],
     [row(1), row(2, 35, 1, { location_type: 'item' })],
   ];

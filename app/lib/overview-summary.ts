@@ -115,15 +115,15 @@ export function summarizeOverview(id: OverviewSectionId, data: unknown, now: num
       date(row.issued);
     }
     const selected = personal ? all.filter(row => !row.is_corporation) : all;
-    const buys = selected.filter(row => row.is_buy_order === true), sells = selected.filter(row => row.is_buy_order === false);
-    const unknownSide = selected.filter(row => row.is_buy_order === undefined).length;
+    // The character-order response has an optional boolean; ESI omits it when false.
+    // https://developers.eveonline.com/blog/esi-and-optional-booleans
+    const buys = selected.filter(row => row.is_buy_order === true), sells = selected.filter(row => row.is_buy_order !== true);
     const pastExpiry = selected.filter(row => date(row.issued) + Number(row.duration) * 86400000 <= now).length;
     const metrics = [count('Personal buy orders', buys.length), count('Personal sell orders', sells.length), isk('Remaining sell asking value', sum(sells.map(row => Number(row.price) * Number(row.volume_remain)))), isk('Remaining buy bid value', sum(buys.map(row => Number(row.price) * Number(row.volume_remain))))];
     if (buys.every(row => row.escrow !== undefined)) metrics.push(isk('Buy-order escrow', sum(buys.map(row => Number(row.escrow)))));
-    if (unknownSide) metrics.push(count('Personal orders with unknown side', unknownSide));
     if (personal && selected.length !== all.length) metrics.push(count('Corporation orders excluded', all.length - selected.length));
     if (pastExpiry) metrics.push(count('Past stated expiry', pastExpiry));
-    return { metrics, ...(unknownSide ? { partial: true } : {}), message: 'Values use remaining quantity and quoted price; they are not proceeds, profit or guaranteed fills. Corporation orders are excluded.' + (unknownSide ? ' Some orders omit their side; they are counted separately and excluded from buy/sell values.' : '') + (buys.some(row => row.escrow === undefined) ? ' Escrow is unavailable because EVE omitted it for one or more buy orders.' : '') + (pastExpiry ? ' Some returned orders are past their stated expiry; the feed may be delayed.' : '') };
+    return { metrics, message: 'Values use remaining quantity and quoted price; they are not proceeds, profit or guaranteed fills. Corporation orders are excluded.' + (buys.some(row => row.escrow === undefined) ? ' Escrow is unavailable because EVE omitted it for one or more buy orders.' : '') + (pastExpiry ? ' Some returned orders are past their stated expiry; the feed may be delayed.' : '') };
   }
   if (id === 'industry') {
     const jobs = rows(data, 'job_id');

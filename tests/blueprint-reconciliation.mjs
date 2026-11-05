@@ -74,9 +74,11 @@ test('classification uses category 9 including reaction formula without recipe; 
   const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [] : [asset(70000002, { type_id: 10003 }), asset(70000003, { type_id: 20001 }), asset(70000004, { type_id: 99999, is_blueprint_copy: true }), asset(70000005, { type_id: 20001, is_blueprint_copy: true })]) }), result = await get(h); invariants(result);
   assert.equal(result.assetsOnly.length, 1); assert.equal(result.assetsOnly[0].typeId, 10003); assert.equal(result.summary.nonBlueprintAssetRecords, 1); assert.equal(result.summary.unclassifiedAssetRecords, 2); assert.equal(result.status, 'partial');
 });
-test('asset-only copy flags true, false and absent retain exact uncertainty and physical quantities', async () => {
+test('asset-only absent copy flags mean not-copy while research metadata stays unknown', async () => {
   const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [] : [asset(70000002, { is_blueprint_copy: true }), asset(70000003, { is_blueprint_copy: false, quantity: 4, is_singleton: false }), asset(70000004)]) }), result = await get(h); invariants(result);
-  assert.deepEqual(plain(result.assetsOnly.map(x => [x.copyStatus, x.quantity, x.isSingleton])), [['copy', 1, true], ['not_copy', 4, false], ['unknown', 1, true]]); assert.equal(result.kindCounts.every(x => x.count === 1), true);
+  assert.deepEqual(plain(result.assetsOnly.map(x => [x.copyStatus, x.quantity, x.isSingleton])), [['copy', 1, true], ['not_copy', 4, false], ['not_copy', 1, true]]);
+  assert.deepEqual(plain(result.kindCounts), [{ copyStatus: 'copy', count: 1 }, { copyStatus: 'not_copy', count: 2 }, { copyStatus: 'unknown', count: 0 }]);
+  assert.match(result.limitations.join(' '), /not researched original or guaranteed usable stock/);
 });
 test('matched unknown catalog types retain blueprint endpoint evidence without fabricating an asset-only type', async () => {
   const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [bp(70000001, { type_id: 99999 })] : [asset(70000001, { type_id: 99999 })]) }), result = await get(h); invariants(result);
@@ -92,6 +94,14 @@ test('matching originals, copies and original stacks compare physical quantities
   const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [bp(), bp(70000002, { quantity: -2, runs: 3 }), bp(70000003, { quantity: 4 })] : [asset(70000001, { is_blueprint_copy: false }), asset(70000002, { is_blueprint_copy: true }), asset(70000003, { quantity: 4, is_singleton: false })]) }), result = await get(h); invariants(result);
   assert.equal(result.summary.matchedRecords, 3); assert.equal(result.summary.conflictingRecords, 0);
 });
+test('an omitted asset copy flag conflicts with a blueprint endpoint copy instead of silently matching', async () => {
+  for (const flag of [undefined, false]) {
+    const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [bp(70000001, { quantity: -2, runs: 3 })] : [asset(70000001, flag === undefined ? {} : { is_blueprint_copy: flag })]) }), result = await get(h); invariants(result);
+    assert.equal(result.summary.matchedRecords, 0); assert.equal(result.summary.conflictingRecords, 1); assert.equal(result.status, 'partial');
+    assert.equal(result.blueprints.blueprints[0].kind, 'copy'); assert.equal(result.blueprints.blueprints[0].copyRuns, 3);
+  }
+});
+
 test('compatible matches do not claim cross-source location consistency or trigger location queries', async () => {
   const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [bp()] : [asset(70000001, { location_id: 60000002, location_flag: 'CorpSAG1', location_type: 'item' })]) }), result = await get(h); invariants(result);
   assert.equal(result.summary.matchedRecords, 1); assert.deepEqual(reads(h), ['blueprints:1', 'assets:1']); assert(result.limitations.some(value => value.includes('locations are not compared')));
@@ -100,14 +110,28 @@ test('identical duplicate asset IDs count once across and within accepted pages 
   const h = harness({ read: args => args.dataset === 'blueprints' ? envelope(args, [bp()]) : envelope(args, args.parameters.page === 1 ? [asset(), asset(), asset(70000002)] : [asset(70000002), asset(70000003)], 2) }), result = await get(h); invariants(result);
   assert.equal(result.assets.coverage.rowsReceived, 5); assert.equal(result.assets.coverage.uniqueRecords, 3); assert.equal(result.assets.coverage.duplicateRecords, 2); assert.equal(result.assets.coverage.consistency, 'inconsistent'); assert.equal(result.assets.coverage.kind, 'partial'); assert.equal(result.relationships.length, 1);
 });
+test('omitted and explicit false copy flags are equivalent duplicate identities within and across pages', async () => {
+  const h = harness({ read: args => args.dataset === 'blueprints' ? envelope(args, []) : envelope(args, args.parameters.page === 1 ? [asset(), asset(70000001, { is_blueprint_copy: false })] : [asset(70000001, { is_blueprint_copy: false })], 2) }), result = await get(h); invariants(result);
+  assert.equal(result.assets.coverage.pagesRead, 2); assert.equal(result.assets.coverage.stopReason, 'complete');
+  assert.equal(result.assets.coverage.uniqueRecords, 1); assert.equal(result.assets.coverage.duplicateRecords, 2);
+  assert.equal(result.assetsOnly[0].copyStatus, 'not_copy'); assert.equal(result.assets.coverage.consistency, 'inconsistent');
+});
+
+test('duplicate normalization cannot hide malformed present copy flags', async () => {
+  for (const invalidFlag of [null, 'false', 0]) {
+    const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [] : [asset(), asset(70000001, { is_blueprint_copy: invalidFlag })]) }), result = await get(h); invariants(result);
+    assert.equal(result.assets.coverage.pagesRead, 0); assert.equal(result.summary.assetOnlyRecords, 0); assert.equal(result.assets.status, 'error');
+  }
+});
+
 test('conflicting duplicate asset page is rejected transactionally, including changes to private location fields', async () => {
-  for (const extra of [{ type_id: 10002 }, { quantity: 5 }, { location_id: 60000002 }, { location_flag: 'CorpSAG1' }, { is_blueprint_copy: false }]) {
+  for (const extra of [{ type_id: 10002 }, { quantity: 5 }, { location_id: 60000002 }, { location_flag: 'CorpSAG1' }, { is_blueprint_copy: true }]) {
     const h = harness({ read: args => args.dataset === 'blueprints' ? envelope(args, [bp()]) : envelope(args, args.parameters.page === 1 ? [asset()] : [asset(70000003), asset(70000001, extra)], 3) }), result = await get(h); invariants(result);
     assert.equal(result.assets.coverage.stopReason, 'conflicting_duplicate'); assert.equal(result.assets.coverage.pagesRead, 1); assert.equal(result.assets.coverage.failedPage, 2); assert.equal(result.assetsOnly.length, 0); assert.deepEqual(reads(h), ['blueprints:1', 'assets:1', 'assets:2']);
   }
 });
 test('malformed asset pages reject entirely and cannot produce plausible zero totals', async () => {
-  for (const change of [{ quantity: -1 }, { item_id: 0 }, { type_id: 0 }, { is_singleton: 'true' }, { is_blueprint_copy: null }, { location_type: 'moon' }, { location_flag: '' }]) {
+  for (const change of [{ quantity: -1 }, { item_id: 0 }, { type_id: 0 }, { is_singleton: 'true' }, { is_blueprint_copy: null }, { is_blueprint_copy: 'false' }, { is_blueprint_copy: 0 }, { location_type: 'moon' }, { location_flag: '' }]) {
     const h = harness({ read: args => envelope(args, args.dataset === 'blueprints' ? [bp()] : [asset(70000002), asset(70000003, change)]) }), result = await get(h); invariants(result);
     assert.equal(result.assets.coverage.pagesRead, 0); assert.equal(result.assets.coverage.stopReason, 'invalid_page'); assert.equal(result.assets.status, 'error'); assert.equal(result.summary.assetOnlyRecords, 0); assert.equal(result.summary.blueprintOnlyRecords, 1);
   }

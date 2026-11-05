@@ -19,7 +19,7 @@ const limitations = [
   'Category, group and location charts count asset records, not physical item units. A record can represent a stack. Quantities are added only within the same inventory type.',
   'Reported locations are source IDs and location kinds, not resolved stations, container ancestry, docking access or available manufacturing stock. Nested containers and other pages are not followed.',
   'Type labels and classifications come from the pinned public catalog. Unmapped types keep their type ID and an explicit unknown classification. No private item names or public player lookups are requested.',
-  'No price, volume, net worth, profit, blueprint runs or usable stock is inferred. Blueprint-copy flags are counted as reported; missing flags remain unknown.',
+  'No price, volume, net worth, profit, blueprint runs or usable stock is inferred. ESI omits optional false blueprint-copy flags; absent or false means not a copy, not proof of an original blueprint.',
   'The application accepts at most 1,000 asset rows per response. Unsupported negative quantities, unsafe sums or malformed responses are rejected, never truncated or replaced by zero.',
 ];
 export function validateInventoryAnalyticsArgs(value: unknown): Selection {
@@ -74,7 +74,10 @@ function summarize(selected: Selection, response: unknown, completed: number): I
   if (response.nextPage !== nextPage || response.pageLimit !== undefined && response.pageLimit !== 500 || response.morePagesAvailable !== undefined && response.morePagesAvailable !== more || response.pageLimitReached !== undefined && response.pageLimitReached !== (selected.page === 500 && more !== false)) return invalid();
   const ids = new Set<number>(), types = new Map<number, InventoryAnalytics['types'][number]>();
   const locations = new Map<number, InventoryAnalytics['locations'][number] & { typeIds: Set<number> }>();
-  let singletonRecords = 0, blueprintCopyRecords = 0, blueprintCopyUnknownRecords = 0, unmappedTypeRecords = 0;
+  let singletonRecords = 0, blueprintCopyRecords = 0, unmappedTypeRecords = 0;
+  // Keep the response field for client compatibility. Valid ESI optional booleans
+  // are false when omitted: https://developers.eveonline.com/blog/esi-and-optional-booleans
+  const blueprintCopyUnknownRecords = 0;
   for (const row of response.data) {
     if (!record(row) || !integer(row.item_id) || ids.has(row.item_id) || !integer(row.type_id) || !integer(row.location_id) || !integer(row.quantity, 0) || typeof row.is_singleton !== 'boolean' ||
         row.is_blueprint_copy !== undefined && typeof row.is_blueprint_copy !== 'boolean' || typeof row.location_type !== 'string' || !['station', 'solar_system', 'item', 'other'].includes(row.location_type) ||
@@ -90,7 +93,6 @@ function summarize(selected: Selection, response: unknown, completed: number): I
     type.records++; type.quantity += row.quantity;
     if (row.is_singleton) { type.singletonRecords++; singletonRecords++; }
     if (row.is_blueprint_copy === true) { type.blueprintCopyRecords++; blueprintCopyRecords++; }
-    if (row.is_blueprint_copy === undefined) { type.blueprintCopyUnknownRecords++; blueprintCopyUnknownRecords++; }
     types.set(row.type_id, type);
     const location = locations.get(row.location_id) ?? { locationId: row.location_id, kind: row.location_type as InventoryLocationKind, records: 0, typeCount: 0, typeIds: new Set<number>() };
     if (location.kind !== row.location_type) return invalid();

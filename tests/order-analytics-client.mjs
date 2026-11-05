@@ -30,6 +30,14 @@ test('actual personal and corporation service DTOs satisfy strict client validat
   for (const extra of [{ data: [] }, { cacheExpires: null }, { pages: null, morePagesAvailable: null }]) { const result = await service(corp, extra); assert.deepEqual(plain(client().orderAnalyticsResponse(result, corp)), result); }
   const missing = await service(args, {}, { scopes: [] }); assert.equal(client().orderAnalyticsResponse(missing, args).status, 'needs_permission');
 });
+test('omitted optional side reaches both clients as Sell with consistent chart counts', async () => {
+  const data = [{ order_id: 70000001, type_id: 34, is_corporation: false, price: 12.34, volume_remain: 30, volume_total: 50, duration: 3, issued: '2026-01-01T00:00:00Z' }];
+  for (const input of [args, corp]) {
+    const value = client().orderAnalyticsResponse(await service(input, { data }), input);
+    assert.equal(value.status, 'ready'); assert.equal(value.orders[0].side, 'sell');
+    assert.equal(value.summary.sell, 1); assert.equal(value.summary.buy, 0); assert.equal(value.summary.unknownSide, 0);
+  }
+});
 const mutations = {
   'wrong character': value => { value.characterId++; }, 'wrong owner': value => { value.entity = 'corporation'; }, 'unexpected private field': value => { value.source = 'private'; }, 'wrong scope': value => { value.scope = scopes[1]; },
   'character corporation ID': value => { value.corporationId = 98000001; }, 'character page': value => { value.coverage.page = 1; }, 'character page count': value => { value.coverage.pages = 1; }, 'extra page': value => { value.coverage.nextPage = 2; },
