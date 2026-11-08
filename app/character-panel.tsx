@@ -4,6 +4,7 @@ import { ConnectionResponseError, type Character } from './lib/connection-client
 import { characterPublicName, characterWorkspaceRequest, formatCharacterValue } from './lib/character-workspace-client';
 import type { CharacterWorkspace, CharacterWorkspaceRequest } from './lib/character-workspace-types';
 import MiningChart from './mining-chart';
+import ReputationCharts from './reputation-charts';
 
 const titles = { faction_warfare: 'Faction warfare', standings: 'NPC standings', loyalty_points: 'Loyalty points', blueprints: 'Blueprint library', research: 'Research agents', planets: 'Planetary colonies', mining: 'Mining ledger' };
 const modeViews = { reputation: ['faction_warfare', 'standings', 'loyalty_points'], industry: ['blueprints', 'research', 'planets', 'mining'] } as const;
@@ -67,6 +68,7 @@ export default function CharacterPanel({ characters, openConnections, mode = 're
       {result.labels && <p className="overview-hint" role="status">Public names: {result.labels.status === 'ready' ? 'available' : result.labels.status === 'partial' ? 'limited coverage' : 'unavailable'}. {result.labels.message}</p>}
       {result.status === 'needs_permission' && <button className="small" onClick={openConnections}>Review access</button>}
       {result.view === 'mining' && <MiningChart key={result.generatedAt} result={result}/>}
+      {mode === 'reputation' && <ReputationCharts key={result.generatedAt} result={result}/>}
       {result.rows.length > 0 && <div className="workspace-table-scroll" tabIndex={0} role="region" aria-label={titles[result.view]}><table className="workspace-table">
         <caption>{titles[result.view]} · {result.rows.length} displayed</caption>
         <thead><tr>{result.columns.map(column => <th scope="col" key={column.key}>{column.label}</th>)}</tr></thead>
