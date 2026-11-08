@@ -137,6 +137,7 @@ function harness(options = {}) {
     if (name.endsWith('/manufacturing-workspace')) return { readManufacturingWorkspace: async (user, args, context) => { calls.push('manufacturing-workspace'); manufacturingCalls.push({ user, args, signal: context.signal }); if(options.manufacturingError) throw new Error('OMIT_PRIVATE_MANUFACTURING_DETAILS'); return { operation: args.operation, synthetic: true }; } };
     if (name.endsWith('/overview')) return { readOverview: async () => { calls.push('overview'); return {}; } };
     if (name.endsWith('/character-analytics')) return { readCharacterAnalytics: async (user, args, context) => { calls.push('character-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
+    if (name.endsWith('/clone-analytics')) return { readCloneAnalytics: async (user, args, context) => { calls.push('clone-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/wallet-analytics')) return { readWalletAnalytics: async (user, args, context) => { calls.push('wallet-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/inventory-analytics')) return { readInventoryAnalytics: async (user, args, context) => { calls.push('inventory-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/industry-analytics')) return { readIndustryAnalytics: async (user, args, context) => { calls.push('industry-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
@@ -810,7 +811,7 @@ for (const [dataset, parameter] of [['asset_names', 'itemIds'], ['mail', 'labels
   }
 });
 
-for (const operation of ['character-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'order-analytics', 'blueprint-analytics', 'blueprint-collection', 'blueprint-reconciliation']) {
+for (const operation of ['character-analytics', 'clone-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'order-analytics', 'blueprint-analytics', 'blueprint-collection', 'blueprint-reconciliation']) {
   test(`${operation} is protected by authentication, origin, content type and request limits`, async () => {
     for (const [headers, expected] of [[{ 'oai-authenticated-user-id': '' }, 401], [{ origin: 'https://other.invalid' }, 403], [{ 'content-type': 'text/plain' }, 415]]) {
       const { api, calls } = harness();
@@ -837,7 +838,7 @@ for (const operation of ['character-analytics', 'wallet-analytics', 'inventory-a
   });
   if (operation === 'blueprint-collection' || operation === 'blueprint-reconciliation') continue;
   test(`${operation} propagates selected context and cancellation without leaking service errors`, async () => {
-    const { api, calls, characterWorkspaceCalls } = harness(), body = { characterId: 90000001, ...(operation === 'character-analytics' ? {} : { entity: 'corporation', page: 2, ...(operation === 'wallet-analytics' ? { division: 3 } : operation === 'industry-analytics' ? { includeCompleted: true } : {}) }) };
+    const { api, calls, characterWorkspaceCalls } = harness(), body = { characterId: 90000001, ...(['character-analytics', 'clone-analytics'].includes(operation) ? {} : { entity: 'corporation', page: 2, ...(operation === 'wallet-analytics' ? { division: 3 } : operation === 'industry-analytics' ? { includeCompleted: true } : {}) }) };
     const incoming = request(body, { path: `/api/eve/${operation}` }), response = await api.POST(incoming);
     assert.equal(response.status, 200); assert.deepEqual(calls, [operation]);
     assert.equal(characterWorkspaceCalls[0].user, 'synthetic-user'); assert.equal(characterWorkspaceCalls[0].signal, incoming.signal);

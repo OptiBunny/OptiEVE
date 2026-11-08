@@ -169,6 +169,7 @@ exposes planetary reads only.
 | Reputation, extraction and freelance views | Use selected read grants and bounded fields. These views do not add contributor/participant lists, member tracking or observer histories. |
 | Personal Industry and optional public labels | Colony list reads do not load layouts or contents. Optional displayed-row enrichment allows bounded public type/skill/system IDs, not private item/container/location/player IDs. This restriction is specific to those enrichments, not the separate explicit public-name tool. |
 | Corporation asset detail workspace | Verifies the requested item in the selected asset page before custom name or coordinate lookup; does not save lookup results. |
+| Clones and implants | Read the owned character under separate existing scopes; omit custom clone names and clone identities, preserve optional home-location/date uncertainty, and keep active/stored snapshots separate. No inferred cooldown readiness, capacity, bonuses or value. |
 | Skills, wallet, orders, inventory and jobs charts | Preserve reported semantics and numeric precision. Counts, quantities, cash flow, queue dates and job states are different evidence; none alone establishes profit, completion or usable stock. |
 | Blueprint collection and reconciliation | Keep identity joins server-local, accepted pages transactional, unknown research explicit and optional copy flags normalized under ESI’s contract, and independent source coverage/freshness visible. |
 | Manufacturing | Bind character, owner, wallet/hangar selections, stock ancestry and exclusions. Use pinned recipe provenance and explicit costs; distinguish conditional modeled economics from realized profit or funded executable jobs. |
@@ -213,6 +214,19 @@ a sell order or a non-copy asset. Null and wrong-type values remain invalid.
 This is not a general missing-data default: public regional order `is_buy_order`
 is required and must still be present. Neither a non-copy flag nor asset catalog
 classification supplies missing blueprint research or usable production capacity.
+
+The clones dashboard permits two sequential character reads under one shared
+55-second deadline. Each granted feed is validated independently; missing grants
+do not trigger reads or broaden consent. Connection changes, cancellation and the
+deadline clear accepted sections. Rate limits stop further reads. Bounds are 100
+jump clones, 64 implant entries per clone and 64 active-implant entries. Duplicate
+jump-clone identities reject the feed; repeated implant types are reported
+occurrences, not item identities. Browser responses have a 16 MiB byte cap and
+strict selection-bound validation. Raw clone names and IDs are omitted, while
+reported clone/home-location IDs are deliberately visible only after manual load.
+No private location IDs are sent for public enrichment. Reputation charts use
+already validated displayed rows, not hidden batches or additional requests;
+standings retain sign and LP balances and warfare periods are never summed.
 
 ### Local tooling, synchronization and public packaging
 

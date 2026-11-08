@@ -325,9 +325,9 @@ try {
     expectStatus(await post('/api/eve/character-workspace', JSON.stringify({ characterId: 90000001, ...input }), { ...identity, origin }), 400);
   }
   expectStatus(await request('/api/eve/character-workspace', { headers: identity }), 404);
-  for (const operation of ['character-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'order-analytics', 'blueprint-analytics']) {
+  for (const operation of ['character-analytics', 'clone-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'order-analytics', 'blueprint-analytics']) {
     stage = `${operation} request and response protections`;
-    const body = JSON.stringify({ characterId: 90000001, ...(operation === 'character-analytics' ? {} : { entity: 'character', ...(operation === 'industry-analytics' ? { includeCompleted: false } : operation === 'order-analytics' ? {} : { page: 1 }) }) });
+    const body = JSON.stringify({ characterId: 90000001, ...(['character-analytics', 'clone-analytics'].includes(operation) ? {} : { entity: 'character', ...(operation === 'industry-analytics' ? { includeCompleted: false } : operation === 'order-analytics' ? {} : { page: 1 }) }) });
     for (const [headers, status] of [[{ origin }, 401], [identity, 403], [{ ...identity, origin: 'https://wrong.example' }, 403], [{ ...identity, origin, 'content-type': 'text/plain' }, 415], [{ ...identity, origin }, 404]]) {
       const response = await post(`/api/eve/${operation}`, body, headers);
       expectStatus(response, status);
