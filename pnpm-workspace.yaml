@@ -32,3 +32,6 @@ overrides:
   "eslint-plugin-react-hooks>zod": "4.6.7"
   "esbuild@>=0.28.0 <0.29": "0.28.2"
   "fflate@>=0.7 <0.8": "0.7.5"
+  "@esbuild-kit/core-utils>esbuild": "0.25.12"
+  "wrangler>esbuild": "0.28.2"
+  "@typescript-eslint/typescript-estree>minimatch": "11.0.1"
