@@ -51,6 +51,8 @@ export type WalletAnalytics = {
   totals: WalletActivityTotals | null;
   daily: Array<WalletActivityBucket & { date: string }>;
   categories: Array<WalletActivityBucket & { id: WalletActivityCategoryId; label: string }>;
+  /** Observed date/category intersections only; ordered by UTC date then fixed category order. */
+  categoryDaily: Array<WalletActivityBucket & { date: string; categoryId: WalletActivityCategoryId }>;
   precisionPolicy: string;
   limitations: string[];
 };

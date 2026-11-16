@@ -49,7 +49,7 @@ const walletSchema = z.strictObject({
   characterId: id, entity: z.enum(['character', 'corporation']), division: id.max(7).nullable(), corporationId: id.nullable(), generatedAt: date, status, message: text, scope: z.enum(['esi-wallet.read_character_wallet.v1', 'esi-wallet.read_corporation_wallets.v1']),
   coverage: z.strictObject({ kind: z.enum(['complete_returned_window', 'partial', 'unknown', 'unavailable']), page: id.max(500), pages: id.nullable(), nextPage: id.max(500).nullable(), previousPage: id.max(500).nullable(), pageLimitReached: z.boolean(), entries: count.max(2500), amountEntries: count.max(2500), missingAmountEntries: count.max(2500), earliest: date.nullable(), latest: date.nullable() }),
   freshness: z.strictObject({ state: freshness, retrievedAt: date.nullable(), cacheExpires: date.nullable(), lastModified: date.nullable() }), totals: totals.nullable(),
-  daily: z.array(z.strictObject({ date: day, ...bucket })).max(2500), categories: z.array(z.strictObject({ id: z.enum(categoryIds), label: name, ...bucket })).max(7), precisionPolicy: text, limitations: z.array(text).max(20),
+  daily: z.array(z.strictObject({ date: day, ...bucket })).max(2500), categories: z.array(z.strictObject({ id: z.enum(categoryIds), label: name, ...bucket })).max(7), categoryDaily: z.array(z.strictObject({ date: day, categoryId: z.enum(categoryIds), ...bucket })).max(2500), precisionPolicy: text, limitations: z.array(text).max(20),
 });
 const invalid = () => new ConnectionResponseError('The analytics service returned an incomplete response. Refresh and try again.');
 function skillSummariesMatch(value: CharacterSkillsAnalytics): boolean {
@@ -123,6 +123,21 @@ function matchingBuckets(values: WalletActivityBucket[], total: WalletActivityBu
   }
   return true;
 }
+function matchingIntersections(value: WalletAnalytics, total: WalletActivityBucket): boolean {
+  const cells = value.categoryDaily;
+  if (!matchingBuckets(cells, total)) return false;
+  const days = new Map<string, WalletActivityBucket[]>(), categories = new Map<string, WalletActivityBucket[]>();
+  for (let index = 0; index < cells.length; index++) {
+    const cell = cells[index], previous = cells[index - 1];
+    if (previous && (cell.date < previous.date || cell.date === previous.date && categoryIds.indexOf(cell.categoryId) <= categoryIds.indexOf(previous.categoryId))) return false;
+    if (!days.has(cell.date)) days.set(cell.date, []);
+    if (!categories.has(cell.categoryId)) categories.set(cell.categoryId, []);
+    days.get(cell.date)!.push(cell); categories.get(cell.categoryId)!.push(cell);
+  }
+  return days.size === value.daily.length && categories.size === value.categories.length &&
+    value.daily.every(row => matchingBuckets(days.get(row.date) ?? [], row)) &&
+    value.categories.every(row => matchingBuckets(categories.get(row.id) ?? [], row));
+}
 const categoryLabels = { market: 'Market activity', transfers: 'Transfers', rewards: 'Rewards and bounties', fees: 'Taxes and fees', industry: 'Industry and services', contracts: 'Contracts', other: 'Other activity' } as const;
 export function walletAnalyticsResponse(value: unknown, args: WalletAnalyticsArgs): WalletAnalytics {
   const parsed = walletSchema.safeParse(value);
@@ -131,19 +146,57 @@ export function walletAnalyticsResponse(value: unknown, args: WalletAnalyticsArg
   if (result.characterId !== args.characterId || result.entity !== args.entity || result.division !== (args.entity === 'corporation' ? args.division : null) || coverage.page !== (args.page ?? 1) || result.scope !== (args.entity === 'corporation' ? 'esi-wallet.read_corporation_wallets.v1' : 'esi-wallet.read_character_wallet.v1') || (args.entity === 'character' && result.corporationId !== null) || (['ready', 'partial'].includes(result.status) && args.entity === 'corporation' && result.corporationId === null) || new Set(result.daily.map(row => row.date)).size !== result.daily.length || new Set(result.categories.map(row => row.id)).size !== result.categories.length) throw invalid();
   if ([coverage, ...result.daily, ...result.categories].some(row => row.entries !== row.amountEntries + row.missingAmountEntries) || (coverage.nextPage !== null && coverage.nextPage !== coverage.page + 1) || coverage.previousPage !== (coverage.page > 1 ? coverage.page - 1 : null)) throw invalid();
   if (!['ready', 'partial'].includes(result.status)) {
-    if (coverage.kind !== 'unavailable' || coverage.entries !== 0 || coverage.pages !== null || coverage.nextPage !== null || coverage.pageLimitReached || coverage.earliest !== null || coverage.latest !== null || result.corporationId !== null || result.totals !== null || result.daily.length || result.categories.length || result.freshness.state !== 'unknown' || result.freshness.retrievedAt !== null || result.freshness.cacheExpires !== null || result.freshness.lastModified !== null) throw invalid();
+    if (coverage.kind !== 'unavailable' || coverage.entries !== 0 || coverage.pages !== null || coverage.nextPage !== null || coverage.pageLimitReached || coverage.earliest !== null || coverage.latest !== null || result.corporationId !== null || result.totals !== null || result.daily.length || result.categories.length || result.categoryDaily.length || result.freshness.state !== 'unknown' || result.freshness.retrievedAt !== null || result.freshness.cacheExpires !== null || result.freshness.lastModified !== null) throw invalid();
     return result;
   }
   const total = { ...coverage, totals: result.totals }, more = coverage.pages === null ? null : coverage.page < coverage.pages;
   const kind = coverage.pages === null ? 'unknown' : coverage.page === 1 && coverage.pages === 1 ? 'complete_returned_window' : 'partial';
   const expectedFreshness = result.freshness.cacheExpires === null ? 'unknown' : Date.parse(result.freshness.cacheExpires) <= Date.parse(result.generatedAt) ? 'stale' : 'fresh';
-  if (!validBucket(total) || !matchingBuckets(result.daily, total) || !matchingBuckets(result.categories, total) || result.categories.some(row => row.label !== categoryLabels[row.id]) ||
+  if (!validBucket(total) || !matchingBuckets(result.daily, total) || !matchingBuckets(result.categories, total) || !matchingIntersections(result, total) || result.categories.some(row => row.label !== categoryLabels[row.id]) ||
       coverage.pages !== null && coverage.pages < coverage.page || coverage.nextPage !== (more && coverage.page < 500 ? coverage.page + 1 : null) || coverage.pageLimitReached !== (coverage.page === 500 && more !== false) || coverage.kind !== kind ||
       result.freshness.retrievedAt === null || result.freshness.state !== expectedFreshness || result.status !== (kind === 'complete_returned_window' && !coverage.missingAmountEntries && expectedFreshness === 'fresh' ? 'ready' : 'partial') ||
       result.daily.some((row, index) => index > 0 && row.date <= result.daily[index - 1].date)) throw invalid();
   if (coverage.entries === 0) { if (coverage.earliest !== null || coverage.latest !== null) throw invalid(); }
   else if (coverage.earliest === null || coverage.latest === null || Date.parse(coverage.earliest) > Date.parse(coverage.latest) || new Date(coverage.earliest).toISOString().slice(0, 10) !== result.daily[0]?.date || new Date(coverage.latest).toISOString().slice(0, 10) !== result.daily[result.daily.length - 1]?.date) throw invalid();
   return result;
+}
+// The larger wallet matrix is still one bounded response. Count actual bytes,
+// keep one growing buffer, and remove the abort listener after each read.
+async function walletJSON(response: Response, signal: AbortSignal): Promise<unknown> {
+  const limit = 16 * 1024 * 1024;
+  const declared = response.headers.get('content-length');
+  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > limit) throw invalid();
+  const reader = response.body?.getReader();
+  if (!reader) throw invalid();
+  let bytes = new Uint8Array(16384), size = 0, done = false, cancel = () => {};
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const part = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        const stop = () => { signal.removeEventListener('abort', stop); reject(new Error('cancelled')); }; cancel = stop;
+        signal.addEventListener('abort', stop, { once: true });
+        if (signal.aborted) { stop(); return; }
+        reader.read().then(value => { signal.removeEventListener('abort', stop); resolve(value); }, error => { signal.removeEventListener('abort', stop); reject(error); });
+      });
+      signal.throwIfAborted();
+      if (part.done) { done = true; break; }
+      if (part.value.byteLength > limit - size) throw invalid();
+      const required = size + part.value.byteLength;
+      if (required > bytes.byteLength) {
+        const expanded = new Uint8Array(Math.min(limit, Math.max(required, bytes.byteLength * 2)));
+        expanded.set(bytes.subarray(0, size)); bytes = expanded;
+      }
+      bytes.set(part.value, size); size = required;
+    }
+    signal.throwIfAborted();
+    const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)));
+    signal.throwIfAborted();
+    return value;
+  } finally {
+    signal.removeEventListener('abort', cancel);
+    if (!done) void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 async function read(path: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
   const controller = new AbortController(); const abort = () => controller.abort();
@@ -156,7 +209,7 @@ async function read(path: string, args: unknown, signal?: AbortSignal): Promise<
     response = await fetch('/api/eve/' + path, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args), signal: controller.signal });
     if (!response.ok) throw new ConnectionResponseError(response.status === 401 ? 'Sign in again to load your analytics.' : response.status === 404 ? 'This character is no longer connected. Reload connection status.' : 'Analytics could not be loaded. Try again or review the connection.', response.status);
     if (!response.headers.get('content-type')?.includes('application/json')) throw invalid();
-    const value: unknown = await response.json();
+    const value: unknown = path === 'wallet-analytics' ? await walletJSON(response, controller.signal) : await response.json();
     controller.signal.throwIfAborted();
     return value;
   } catch (error) {
