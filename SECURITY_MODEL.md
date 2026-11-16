@@ -103,6 +103,15 @@ existing saved read scopes, sequential requests and a shared 55-second deadline.
 Missing, failed and partial sections retain their status and evidence. The tool
 returns the same projected metrics and cache metadata, never raw records or
 private descriptions; no corporation selector, extra grant or archive is added.
+The character_training_report tool accepts the same owned character selector
+as the training dashboard and reuses its three sequential saved-grant reads.
+Its projection limits skill groups to ten and upcoming queue rows to twenty,
+with explicit omitted counts and per-section status/freshness. Schedule buckets
+and at most 31 UTC daily groups use the shared completion timestamp; missing
+dates never establish a zero or paused queue. Browser validation reconstructs
+counts and daily groups from validated entries and binds the schedule clock to
+the selected report. Chart/table filters are local and reset with the result.
+No new permission, retained data or background work is introduced.
 History mutations must be standalone MCP requests: batches reject them before
 execution so a committed change cannot lose its confirmation to the read-response
 budget. Read-only history status and reports remain batch-compatible.

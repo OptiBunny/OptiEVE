@@ -1,11 +1,12 @@
 # OptiEVE
 
-A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-two tools through `/mcp`:
+A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-three tools through `/mcp`:
 
 | Tool | Data returned |
 | --- | --- |
 | `connection_status` | Connected characters, granted scopes and setup URLs |
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
+| `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
 | `read_character_data` | An allowlisted character dataset, with dataset-specific parameters and pagination |
 | `read_corporation_data` | Wallet balances, assets and name/location lookups, order history, contracts and items/bids, industry jobs, blueprints, facilities, structures, mining extractions, freelance jobs, projects and your selected character’s contribution |
@@ -91,6 +92,10 @@ Only types classified in blueprint category 9 by the pinned public SDE qualify a
 Both views reuse existing asset/industry read grants. Corporation access remains controlled by EVE roles (Director for assets and Factory Manager for jobs). There are no new scopes, credentials, history tables, automatic reads or game-state writes. These are web dashboards and do not add MCP tools. Their shapes and limits follow the [dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31); activity labels come from the pinned official SDE, with unknown numeric activities retained explicitly.
 
 **Skills & training** adds a character-manager dashboard for reported total and unallocated SP, skill-group and level charts, a searchable skill list, attributes and remap metadata, and a reported queue timeline with exact UTC dates. Trained and active levels remain separate, including expert-system boosts. The chart does not infer active training, current SP, completion or a precise training rate. Skills may lag until the next EVE login, and queue dates can be absent or already past. Skills, queue and attributes load independently under their existing read scopes, with a shared deadline and per-section freshness. Responses above the application limits of 2,000 skill rows or 1,000 queue rows are rejected rather than silently truncated.
+
+The training queue also shows disjoint schedule buckets: finish dates already elapsed, the next 24 hours, over 24 hours through seven days, over seven through thirty days, later dates, and missing finish dates. All buckets use the same report-completion timestamp; a date exactly at the boundary belongs to the earlier bucket. The next-thirty-days chart places reported finish dates on a UTC calendar axis and leaves days without dated entries unfilled. Missing dates can hide additional planned work, and a passed finish is not confirmed completion. Local bucket/date/skill filters show the first 20 matching timeline entries and 100-row table pages; the charts continue to cover the full returned queue. Filters clear on a new result or character selection.
+
+In the private chat, `character_training_report` requests those same three feeds for one owned character. It returns SP and level summaries, the ten largest reported skill groups, schedule counts and daily planned finishes, the first twenty upcoming queue entries, and attributes/remap metadata. Omitted group and future-entry counts remain explicit. Section permissions and freshness stay separate; no active-training state, current in-training SP, SP/hour, remap readiness or confirmed completion is inferred. This report adds no history, settings, permission requests or game writes.
 
 **Wallet activity** shows daily incoming/outgoing ISK, net cash flow and fixed activity categories for one explicitly selected journal page. Choose either the character wallet or one corporation wallet division. Amounts are summed with exact integer arithmetic on the received JSON numbers' decimal representations; prior provider or JSON parsing precision cannot be recovered. Missing amounts remain unknown, and days without returned rows are omitted. Transfers are included as movements, so these charts do not establish profit, wealth or historical balances. Loading another page replaces the chart; no pages or accounts are combined. The application accepts at most 2,500 rows in one response. Raw journal entries, counterparties, descriptions, balances and tax fields are excluded from this dashboard's response.
 
