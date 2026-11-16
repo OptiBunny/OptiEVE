@@ -97,6 +97,12 @@ and MCP transport. Its input limit is 32,000 bytes. Legacy batches allow at most
 eight messages and a four MiB aggregate response, with later handlers withheld
 when the remaining output budget is insufficient. Do not mistake that batch
 budget for a universal upstream or single-tool response cap.
+The character_overview tool accepts only an owned character selector and fixes
+the view to personal. It reuses the browser overview reader, with six fixed feeds,
+existing saved read scopes, sequential requests and a shared 55-second deadline.
+Missing, failed and partial sections retain their status and evidence. The tool
+returns the same projected metrics and cache metadata, never raw records or
+private descriptions; no corporation selector, extra grant or archive is added.
 History mutations must be standalone MCP requests: batches reject them before
 execution so a committed change cannot lose its confirmation to the read-response
 budget. Read-only history status and reports remain batch-compatible.
