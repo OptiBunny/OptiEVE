@@ -8,6 +8,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `character_clone_report` | Separate active-implant and stored-clone evidence, full received counts and bounded previews without clone names or locations |
+| `character_calendar_report` | One calendar-summary batch with response and date-window counts, a bounded UTC schedule and explicit continuation evidence |
 | `wallet_activity_report` | One journal page’s cash-flow totals and categories, with the latest thirty returned UTC dates and explicit omissions |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
 | `contracts_report` | One contracts-page briefing with status/type counts and up to twenty upcoming offer expirations |
@@ -39,7 +40,7 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 ## Workspace navigation
 
-The fifteen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+The sixteen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
 
 ## Saved wallet history and reports
 
@@ -205,6 +206,16 @@ The jump-clone table and implant-count chart show response-local clone rows, rep
 Reported clone-jump and station-change dates are shown as timestamps. Missing dates and optional home-location fields stay unknown. The dashboard does not infer jump readiness, clone capacity, implant bonuses, value or whether a facility is accessible. One load accepts at most 100 jump clones and 64 implant entries per clone or active-implant response; oversized or malformed feeds fail explicitly. Loads are manual, cancellable and clear on refresh, character changes or leaving the view. No account history, new permissions or game writes are added. See the [dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31) and [CCP’s jump-clone guide](https://support.eveonline.com/hc/en-us/articles/203217202-Jump-Clones) for provider fields and the separate in-game requirements.
 
 In chat, `character_clone_report` reads those same two feeds for one owned character. It retains each feed's permission, status and freshness separately, with full accepted counts and previews of at most twenty active implant entries, twenty stored clones and eight implant entries per shown clone. Repeated type occurrences remain repeated, and omitted counts stay explicit. Public implant labels are limited to 128 Unicode characters with truncation flags; exact type IDs remain available. Custom clone names, persistent clone IDs, home and stored-clone locations are omitted. Unavailable sections remain unknown, and jump/station-change timestamps do not imply readiness, capacity, bonuses or value. The report adds no reads beyond the existing two feeds, settings, permissions, saved history or game writes.
+
+## Calendar summaries
+
+The **Calendar** workspace manually loads one connected character's next batch of at most fifty event summaries using the existing calendar read permission. Response counts, six date windows and a sparse thirty-day UTC calendar describe only that returned batch. Local response, date-window, date and title filters change the table, while summary charts keep their original scope. Missing dates, responses, titles, importance values and event IDs remain explicit; importance is a reported number without an inferred priority meaning.
+
+**Load next batch** uses the final returned row's event ID when available and replaces the current result. Event IDs are not sorted or assumed to increase numerically. A short or empty response does not prove that the full calendar is complete. Missing or unchanged continuation IDs disable that continuation; no automatic paging or cross-batch history is added. Selection changes, refresh and leaving the view clear results and cancel outstanding requests.
+
+Event titles remain plain text, limited to 256 Unicode characters with truncation labels. Unsafe control or bidirectional text is redacted, including when it occurs beyond the displayed prefix; missing, empty and redacted titles remain distinct. Event details, descriptions, organizers and attendee lists are not requested. Dates describe reported summaries and do not establish attendance, completion, duration or a reminder schedule.
+
+In chat, `character_calendar_report` returns the same full batch counts and schedule plus at most twenty summary rows with explicit omitted counts. It omits event titles and row event IDs, retaining only the selected and next event cursor needed for manual continuation. Unavailable summaries and preview counts stay unknown; a successfully read empty batch remains zero. The report does not respond to invitations, edit events, retain calendar history or broaden permissions. Provider behavior follows the [dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31).
 
 ## Reputation and loyalty
 

@@ -14,6 +14,7 @@ import IndustryAnalyticsPanel from './industry-analytics-panel';
 import OrderAnalyticsPanel from './order-analytics-panel';
 import MarketTransactionsPanel from './market-transactions-panel';
 import ContractsAnalyticsPanel from './contracts-analytics-panel';
+import CalendarAnalyticsPanel from './calendar-analytics-panel';
 import BlueprintAnalyticsPanel from './blueprint-analytics-panel';
 import WorkspaceNavigation, { type WorkspaceDestination } from './workspace-navigation';
 export default function ConnectionPanel(){
@@ -62,6 +63,7 @@ export default function ConnectionPanel(){
   {statusError&&<div className="alert" role="alert"><p>{statusError}</p>{signedOut&&<a className="button secondary" href="/signin-with-chatgpt?return_to=%2F" target="_top">Sign in with ChatGPT</a>} <button className="small" disabled={statusLoading||busy} onClick={()=>void reload()}>Try again</button></div>}
   {tab==='training'&&status&&!statusLoading&&<CharacterAnalyticsPanel key={'training-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='clones'&&status&&!statusLoading&&<CloneAnalyticsPanel key={'clones-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
+  {tab==='calendar'&&status&&!statusLoading&&<CalendarAnalyticsPanel key={'calendar-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='orders'&&status&&!statusLoading&&<OrderAnalyticsPanel key={'orders-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='market'&&status&&!statusLoading&&<MarketTransactionsPanel key={'market-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='contracts'&&status&&!statusLoading&&<ContractsAnalyticsPanel key={'contracts-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
