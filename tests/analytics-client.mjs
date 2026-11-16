@@ -21,7 +21,7 @@ function characterFixture() {
   return {
     characterId, generatedAt: stamp, status: 'ready', message: 'Synthetic response.',
     skills: section({ totalSp: 8001, unallocatedSp: null, reportedSkillSp: 8000, skillCount: 1, trainedSkillCount: 1, activeSkillCount: 1, reducedActiveSkillCount: 0, boostedActiveSkillCount: 0, levelDistribution: Array.from({ length: 6 }, (_, level) => ({ level, trainedCount: level === 3 ? 1 : 0, activeCount: level === 3 ? 1 : 0 })), groups: [{ groupId: 20, name: 'Synthetic public group', skillCount: 1, skillpoints: 8000 }], skills: [{ typeId: 1001, name: 'Synthetic public skill', groupId: 20, groupName: 'Synthetic public group', trainedLevel: 3, activeLevel: 3, skillpoints: 8000 }] }),
-    queue: section({ entryCount: 1, timedEntryCount: 1, passedFinishEntryCount: 0, nextPlannedFinishAt: '2026-01-02T00:00:00.000Z', lastPlannedFinishAt: '2026-01-02T00:00:00.000Z', entries: [{ position: 0, typeId: 1001, name: 'Synthetic public skill', finishedLevel: 4, startAt: stamp, finishAt: '2026-01-02T00:00:00.000Z', levelStartSp: 8000, levelEndSp: 45000, trainingStartSp: 12000 }] }, 'esi-skills.read_skillqueue.v1'),
+    queue: section({ schedule: { asOf: stamp, elapsedEntries: 0, next24hEntries: 1, days2To7Entries: 0, days8To30Entries: 0, laterEntries: 0, missingFinishEntries: 0, daily: [{ date: '2026-01-02', entries: 1 }] }, entryCount: 1, timedEntryCount: 1, passedFinishEntryCount: 0, nextPlannedFinishAt: '2026-01-02T00:00:00.000Z', lastPlannedFinishAt: '2026-01-02T00:00:00.000Z', entries: [{ position: 0, typeId: 1001, name: 'Synthetic public skill', finishedLevel: 4, startAt: stamp, finishAt: '2026-01-02T00:00:00.000Z', levelStartSp: 8000, levelEndSp: 45000, trainingStartSp: 12000 }] }, 'esi-skills.read_skillqueue.v1'),
     attributes: section({ charisma: 20, intelligence: 21, memory: 22, perception: 23, willpower: 24, bonusRemaps: null, lastRemapAt: null, accruedRemapCooldownAt: null }),
   };
 }
@@ -59,7 +59,7 @@ test('character analytics preserves partial permission state, unknown queue date
   const value = characterFixture(); value.status = 'partial';
   value.attributes = { ...value.attributes, status: 'needs_permission', retrievedAt: null, cacheExpires: null, freshness: 'unknown', data: null };
   value.skills.data.skills[0].activeLevel = 5; value.skills.data.boostedActiveSkillCount = 1; value.skills.data.levelDistribution[3].activeCount = 0; value.skills.data.levelDistribution[5].activeCount = 1;
-  Object.assign(value.queue.data.entries[0], { startAt: null, finishAt: null }); Object.assign(value.queue.data, { timedEntryCount: 0, nextPlannedFinishAt: null, lastPlannedFinishAt: null });
+  Object.assign(value.queue.data.entries[0], { startAt: null, finishAt: null }); Object.assign(value.queue.data, { timedEntryCount: 0, nextPlannedFinishAt: null, lastPlannedFinishAt: null }); Object.assign(value.queue.data.schedule, { next24hEntries: 0, missingFinishEntries: 1, daily: [] });
   assert.equal(client.characterAnalyticsResponse(value, args).skills.data.skills[0].activeLevel, 5);
 });
 
@@ -180,4 +180,35 @@ test('the client accepts actual wallet-service projections including subnormal n
     const projected = await read('synthetic-owner', selected);
     assert.deepEqual(plain(client.walletAnalyticsResponse(projected, selected)), plain(projected), mode);
   }
+});
+
+
+for (const [name, mutate] of [
+  ['missing schedule', value => delete value.queue.data.schedule],
+  ['wrong assessment instant', value => value.queue.data.schedule.asOf = expires],
+  ['plausible but wrong bucket', value => { value.queue.data.schedule.next24hEntries = 0; value.queue.data.schedule.days2To7Entries = 1; }],
+  ['unknown schedule fields', value => value.queue.data.schedule.trainingActive = true],
+  ['missing daily date', value => value.queue.data.schedule.daily = []],
+  ['wrong daily count', value => value.queue.data.schedule.daily[0].entries = 2],
+  ['zero-filled day', value => value.queue.data.schedule.daily.push({ date: '2026-01-03', entries: 0 })],
+  ['duplicate daily day', value => value.queue.data.schedule.daily.push({ ...value.queue.data.schedule.daily[0] })],
+  ['impossible daily date', value => value.queue.data.schedule.daily[0].date = '2026-02-30'],
+  ['extra private daily field', value => value.queue.data.schedule.daily[0].privateName = 'OMIT_PRIVATE'],
+]) test('training schedule validation rejects ' + name, () => {
+  const value = characterFixture(); mutate(value); assert.throws(() => client.characterAnalyticsResponse(value, args), /incomplete response/);
+});
+
+test('schedule validation independently checks rolling boundaries and normalizes offset dates to UTC', () => {
+  const value = characterFixture(); value.generatedAt = '2026-01-01T12:00:00.000Z';
+  for (const part of [value.skills, value.queue, value.attributes]) part.cacheExpires = '2026-01-02T12:00:00.000Z';
+  const finishes = ['2026-01-01T12:00:00.000Z', '2026-01-01T13:00:00.000Z', '2026-01-02T12:00:00.000Z', '2026-01-02T12:00:00.001Z', '2026-01-08T12:00:00.000Z', '2026-01-08T12:00:00.001Z', '2026-01-31T12:00:00.000Z', '2026-01-31T12:00:00.001Z', null, '2026-01-02T00:30:00+02:00'];
+  value.queue.data = { entryCount: 10, timedEntryCount: 0, passedFinishEntryCount: 1, nextPlannedFinishAt: finishes[1], lastPlannedFinishAt: finishes[7],
+    entries: finishes.map((finishAt, position) => ({ position, typeId: 1001 + position, name: 'Synthetic skill ' + position, finishedLevel: 1, startAt: null, finishAt, levelStartSp: null, levelEndSp: null, trainingStartSp: null })),
+    schedule: { asOf: value.generatedAt, elapsedEntries: 1, next24hEntries: 3, days2To7Entries: 2, days8To30Entries: 2, laterEntries: 1, missingFinishEntries: 1, daily: [{ date: '2026-01-01', entries: 2 }, { date: '2026-01-02', entries: 2 }, { date: '2026-01-08', entries: 2 }, { date: '2026-01-31', entries: 1 }] },
+  };
+  assert.deepEqual(plain(client.characterAnalyticsResponse(value, args).queue.data.schedule), value.queue.data.schedule);
+  const lastBoundary = structuredClone(value); lastBoundary.queue.data.schedule.daily[3].entries = 2;
+  assert.throws(() => client.characterAnalyticsResponse(lastBoundary, args), /incomplete response/);
+  const unsorted = structuredClone(value); unsorted.queue.data.schedule.daily.reverse();
+  assert.throws(() => client.characterAnalyticsResponse(unsorted, args), /incomplete response/);
 });

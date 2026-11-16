@@ -23,7 +23,12 @@ const skills = z.strictObject({
   groups: z.array(z.strictObject({ groupId: id.nullable(), name, skillCount: count, skillpoints: count })).max(2000),
   skills: z.array(z.strictObject({ typeId: id, name, groupId: id.nullable(), groupName: name, trainedLevel: level, activeLevel: level, skillpoints: count })).max(2000),
 }).refine(value => value.skillCount === value.skills.length && new Set(value.skills.map(row => row.typeId)).size === value.skillCount && value.levelDistribution.every((row, i) => row.level === i) && new Set(value.groups.map(row => row.groupId)).size === value.groups.length && value.levelDistribution.reduce((sum, row) => sum + row.trainedCount, 0) === value.skillCount && value.levelDistribution.reduce((sum, row) => sum + row.activeCount, 0) === value.skillCount && value.groups.reduce((sum, row) => sum + row.skillCount, 0) === value.skillCount && value.groups.reduce((sum, row) => sum + row.skillpoints, 0) === value.reportedSkillSp);
+const schedule = z.strictObject({
+  asOf: date, elapsedEntries: count.max(1000), next24hEntries: count.max(1000), days2To7Entries: count.max(1000), days8To30Entries: count.max(1000), laterEntries: count.max(1000), missingFinishEntries: count.max(1000),
+  daily: z.array(z.strictObject({ date: day, entries: count.min(1).max(1000) })).max(31),
+});
 const queue = z.strictObject({
+  schedule,
   entryCount: count.max(1000), timedEntryCount: count, passedFinishEntryCount: count, nextPlannedFinishAt: date.nullable(), lastPlannedFinishAt: date.nullable(),
   entries: z.array(z.strictObject({ position: count, typeId: id, name, finishedLevel: level.min(1), startAt: date.nullable(), finishAt: date.nullable(), levelStartSp: count.nullable(), levelEndSp: count.nullable(), trainingStartSp: count.nullable() })).max(1000),
 }).refine(value => value.entryCount === value.entries.length && value.timedEntryCount <= value.entryCount && value.passedFinishEntryCount <= value.entryCount && new Set(value.entries.map(row => row.position)).size === value.entries.length);
@@ -71,6 +76,26 @@ export function characterAnalyticsResponse(value: unknown, args: CharacterAnalyt
   if (result.status !== expectedStatus || result.skills.data && !skillSummariesMatch(result.skills.data)) throw invalid();
   if (result.queue.data) {
     const queue = result.queue.data, entries = queue.entries;
+    // Independently reconstruct the six disjoint buckets and chart dates from
+    // validated entries; a plausible but inconsistent schedule must not render.
+    const expected = { elapsedEntries: 0, next24hEntries: 0, days2To7Entries: 0, days8To30Entries: 0, laterEntries: 0, missingFinishEntries: 0 };
+    const daily = new Map<string, number>();
+    for (const row of entries) {
+      if (row.finishAt === null) { expected.missingFinishEntries++; continue; }
+      const finish = Date.parse(row.finishAt), remaining = finish - generated;
+      if (remaining <= 0) expected.elapsedEntries++;
+      else if (remaining <= 86400000) expected.next24hEntries++;
+      else if (remaining <= 7 * 86400000) expected.days2To7Entries++;
+      else if (remaining <= 30 * 86400000) expected.days8To30Entries++;
+      else expected.laterEntries++;
+      if (remaining > 0 && remaining <= 30 * 86400000) {
+        const date = new Date(finish).toISOString().slice(0, 10);
+        daily.set(date, (daily.get(date) ?? 0) + 1);
+      }
+    }
+    const dates = [...daily].sort(([left], [right]) => left.localeCompare(right));
+    if (queue.schedule.asOf !== result.generatedAt || (Object.keys(expected) as Array<keyof typeof expected>).some(key => queue.schedule[key] !== expected[key]) ||
+        queue.schedule.daily.length !== dates.length || queue.schedule.daily.some((row, index) => row.date !== dates[index][0] || row.entries !== dates[index][1])) throw invalid();
     const future = entries.flatMap(row => row.finishAt !== null && Date.parse(row.finishAt) > generated ? [row.finishAt] : []).sort((a, b) => Date.parse(a) - Date.parse(b));
     if (new Set(entries.map(row => `${row.typeId}:${row.finishedLevel}`)).size !== entries.length || entries.some((row, index) => index > 0 && row.position <= entries[index - 1].position || row.startAt !== null && row.finishAt !== null && Date.parse(row.finishAt) < Date.parse(row.startAt) || row.levelStartSp !== null && row.levelEndSp !== null && row.levelEndSp < row.levelStartSp) ||
         queue.timedEntryCount !== entries.filter(row => row.startAt !== null && row.finishAt !== null).length || queue.passedFinishEntryCount !== entries.filter(row => row.finishAt !== null && Date.parse(row.finishAt) <= generated).length ||

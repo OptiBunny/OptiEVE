@@ -1,7 +1,7 @@
 import { EveError, listConnections, readCharacterData } from './eve';
 import { findPublishedManufacturingItem } from './manufacturing-catalog';
 import { OverviewDataError, overviewDate } from './overview-summary';
-import type { CharacterAnalytics, CharacterAnalyticsRequest, CharacterAnalyticsSection, CharacterAnalyticsStatus, CharacterAttributesAnalytics, CharacterQueueAnalytics, CharacterSkillGroup, CharacterSkillsAnalytics } from './character-analytics-types';
+import type { CharacterAnalytics, CharacterAnalyticsRequest, CharacterAnalyticsSection, CharacterAnalyticsStatus, CharacterAttributesAnalytics, CharacterQueueAnalytics, CharacterQueueEntry, CharacterSkillGroup, CharacterSkillsAnalytics, CharacterTrainingSchedule } from './character-analytics-types';
 
 const skillsScope = 'esi-skills.read_skills.v1';
 const queueScope = 'esi-skills.read_skillqueue.v1';
@@ -104,6 +104,26 @@ function skills(data: unknown): CharacterSkillsAnalytics {
     skills: rows,
   };
 }
+/** Derive a disjoint schedule partition from already validated queue entries. */
+export function buildTrainingSchedule(entries: readonly CharacterQueueEntry[], at: number): CharacterTrainingSchedule {
+  const schedule: CharacterTrainingSchedule = { asOf: new Date(at).toISOString(), elapsedEntries: 0, next24hEntries: 0, days2To7Entries: 0, days8To30Entries: 0, laterEntries: 0, missingFinishEntries: 0, daily: [] };
+  const day = 86400000, daily = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.finishAt === null) { schedule.missingFinishEntries++; continue; }
+    const finish = Date.parse(entry.finishAt), remaining = finish - at;
+    if (remaining <= 0) schedule.elapsedEntries++;
+    else if (remaining <= day) schedule.next24hEntries++;
+    else if (remaining <= 7 * day) schedule.days2To7Entries++;
+    else if (remaining <= 30 * day) schedule.days8To30Entries++;
+    else schedule.laterEntries++;
+    if (remaining > 0 && remaining <= 30 * day) {
+      const date = new Date(finish).toISOString().slice(0, 10);
+      daily.set(date, (daily.get(date) ?? 0) + 1);
+    }
+  }
+  schedule.daily = [...daily].sort(([left], [right]) => left.localeCompare(right)).map(([date, entries]) => ({ date, entries }));
+  return schedule;
+}
 function queue(data: unknown, now: number): CharacterQueueAnalytics {
   // The API has no maxItems contract. This is a local safety limit, not the
   // game's queue capacity; reject oversized responses rather than omit rows.
@@ -127,6 +147,7 @@ function queue(data: unknown, now: number): CharacterQueueAnalytics {
     passedFinishEntryCount: entries.filter(row => row.finishAt !== null && Date.parse(row.finishAt) <= now).length,
     nextPlannedFinishAt: futureFinishes[0] ?? null,
     lastPlannedFinishAt: futureFinishes[futureFinishes.length - 1] ?? null,
+    schedule: buildTrainingSchedule(entries, now),
     entries,
   };
 }
@@ -139,7 +160,7 @@ function attributes(data: unknown): CharacterAttributesAnalytics {
 }
 const notes = {
   skills: 'Reported skill points and active/trained levels from this response. Skill data may lag until the next character login. Active levels can be lower because of account restrictions or higher because of expert systems; account status is not inferred. Group charts sum the reported per-skill SP and do not reconcile the separately reported total SP. Missing unallocated SP is unknown. Names and groups use the bundled public SDE; new or unpublished types retain their IDs. No active SP, current in-training SP or training rate is calculated.',
-  queue: 'One current queue response, ordered by its reported positions. Dates are a reported schedule, not proof that training is active or unpaused; missing dates are unknown, not proof of a paused queue. Past-finish entries may not yet be reflected in the skill snapshot. Future finish dates are planned and may change. No skill points, trained levels, completion percentage or queue edits are inferred from the schedule.',
+  queue: 'One current queue response, ordered by its reported positions. Dates are a reported schedule, not proof that training is active or unpaused; missing dates are unknown, not proof of a paused queue. Past-finish entries may not yet be reflected in the skill snapshot. Future finish dates are planned and may change. Schedule buckets use disjoint rolling periods from request completion; daily counts include only reported future finishes within 30 days, grouped by UTC date with absent dates omitted. No skill points, trained levels, completion percentage or queue edits are inferred from the schedule.',
   attributes: 'Reported attributes and optional remap metadata from this response. Missing remap values are unknown. No training rate, implant effect, account status or remap availability is inferred; these attributes alone do not establish an accurate SP/hour rate.',
 };
 function refreshFreshness<T>(section: CharacterAnalyticsSection<T>, completedAt: number) {
@@ -218,6 +239,7 @@ export function createCharacterAnalyticsReader(dependencies: Dependencies) {
       result.queue.data.passedFinishEntryCount = entries.filter(row => row.finishAt !== null && Date.parse(row.finishAt) <= completedAt).length;
       result.queue.data.nextPlannedFinishAt = future[0] ?? null;
       result.queue.data.lastPlannedFinishAt = future[future.length - 1] ?? null;
+      result.queue.data.schedule = buildTrainingSchedule(entries, completedAt);
     }
     const sections = [result.skills, result.queue, result.attributes];
     result.status = sections.every(section => section.status === 'ready') ? 'ready'

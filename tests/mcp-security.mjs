@@ -23,7 +23,7 @@ function harness(options = {}) {
   const characterWorkspaceCalls = [];
   const manufacturingCalls = [];
   const historyCalls = [];
-  const overviewCalls = [], overviewFeedCalls = [];
+  const overviewCalls = [], overviewFeedCalls = [], trainingCalls = [];
   let realOverview;
   const execute = (code, require = () => { throw new Error('Unexpected import'); }) => {
     const fixtureModule = { exports: {} };
@@ -162,6 +162,7 @@ function harness(options = {}) {
       }
       return realOverview(user, args, context);
     } };
+    if (name.endsWith('/character-training-report')) return { readCharacterTrainingReport: async (user, args, context) => { calls.push('training-report'); trainingCalls.push({ user, args, signal: context.signal }); if (options.trainingError) throw new Error('OMIT_PRIVATE_TRAINING'); if (options.trainingOwnerError) throw new EveError('Choose a connected character.', 404); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/character-analytics')) return { readCharacterAnalytics: async (user, args, context) => { calls.push('character-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/clone-analytics')) return { readCloneAnalytics: async (user, args, context) => { calls.push('clone-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/wallet-analytics')) return { readWalletAnalytics: async (user, args, context) => { calls.push('wallet-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
@@ -177,7 +178,7 @@ function harness(options = {}) {
     if (name.endsWith('/request-body')) return bodyModule ??= execute(source('app/lib/request-body.ts'));
     throw new Error('Unexpected import');
   };
-  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls, overviewCalls, overviewFeedCalls };
+  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls, overviewCalls, overviewFeedCalls, trainingCalls };
 }
 
 function request(value, options = {}) {
@@ -204,7 +205,7 @@ test('Sites discovery retains existing tools and exposes the optional corporatio
   assert.deepEqual(discovery.result.capabilities, { tools: {} });
   assert.equal(discovery.result.serverInfo.name, 'OptiEVE');
   const listing = await (await mcp.POST(request(rpc('tools/list')))).json();
-  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'character_overview', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
+  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'character_overview', 'character_training_report', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
   assert(listing.result.tools.filter(item => !historyNames.includes(item.name)).every(item => item.annotations.readOnlyHint && !item.annotations.destructiveHint));
 });
 
@@ -1195,7 +1196,7 @@ test('legacy batches still permit saved history status and reports', async () =>
 
 test('saved history comparisons reuse the existing read-only tool with bounded report options', async () => {
   const h = harness(), listed = (await (await h.mcp.POST(request(rpc('tools/list')))).json()).result.tools;
-  assert.equal(listed.length, 22);
+  assert.equal(listed.length, 23);
   const report = listed.find(item => item.name === 'wallet_history_report');
   assert.deepEqual(report.inputSchema.properties.days.enum, [7, 30, 90, 365]);
   assert.equal(report.inputSchema.properties.comparePrevious.type, 'boolean');
@@ -1215,4 +1216,42 @@ test('saved history comparisons reuse the existing read-only tool with bounded r
   ]) await rpcError(await h.mcp.POST(request(tool(name, args))), -32602, 1);
   const denied = request(tool('wallet_history_report', selected)); denied.headers.delete('oai-authenticated-user-id');
   assert.equal((await (await h.mcp.POST(denied)).json()).result.isError, true); assert.equal(h.historyCalls.length, 1);
+});
+
+
+test('character training report exposes one strict owned selector and read-only annotations', async () => {
+  const h = harness(), listing = await (await h.mcp.POST(request(rpc('tools/list')))).json();
+  const item = listing.result.tools.find(row => row.name === 'character_training_report');
+  assert.deepEqual(item.inputSchema, { type: 'object', required: ['characterId'], properties: { characterId: { type: 'integer', minimum: 1 } }, additionalProperties: false });
+  assert.deepEqual(item.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.equal(h.calls.length, 0);
+});
+test('training report MCP forwards only the gateway owner, selected character and cancellation', async () => {
+  const h = harness(), input = request(tool('character_training_report', { characterId: 90000001 }));
+  const response = await (await h.mcp.POST(input)).json();
+  assert.equal(response.result.isError, undefined); assert.deepEqual(h.calls, ['training-report']);
+  assert.equal(h.trainingCalls[0].user, 'synthetic-user');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.trainingCalls[0].args)), { characterId: 90000001 });
+  assert.equal(h.trainingCalls[0].signal, input.signal);
+  assert.deepEqual(JSON.parse(response.result.content[0].text), { characterId: 90000001, synthetic: true });
+});
+test('training report refuses missing identity and notifications without reads', async () => {
+  const h = harness();
+  const denied = await (await h.mcp.POST(request(tool('character_training_report', { characterId: 90000001 }), { headers: { 'oai-authenticated-user-id': '' } }))).json();
+  assert.equal(denied.result.isError, true);
+  const notification = await h.mcp.POST(request({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'character_training_report', arguments: { characterId: 90000001 } } }));
+  assert.equal(notification.status, 202); assert.equal(await notification.text(), ''); assert.equal(h.calls.length, 0);
+});
+test('training report rejects alternate owners, feed selectors, unbounded limits and bad IDs', async () => {
+  const h = harness();
+  for (const args of [null, {}, { characterId: 0 }, { characterId: -1 }, { characterId: 1.5 }, { characterId: Number.MAX_SAFE_INTEGER + 1 }, { characterId: '90000001' }, { characterId: 90000001, userId: 'other' }, { characterId: 90000001, corporationId: 98000001 }, { characterId: 90000001, dataset: 'mail' }, { characterId: 90000001, limit: 2000 }, { characterId: 90000001, page: 2 }, { characterId: 90000001, url: 'https://attacker.example' }]) await rpcError(await h.mcp.POST(request(tool('character_training_report', args))), -32602, 1);
+  assert.equal(h.calls.length, 0);
+});
+test('training report preserves ownership refusal and hides unexpected exception details', async () => {
+  const owned = harness({ trainingOwnerError: true });
+  const denied = await (await owned.mcp.POST(request(tool('character_training_report', { characterId: 90000002 })))).json();
+  assert.equal(denied.result.isError, true); assert.match(denied.result.content[0].text, /connected/);
+  const failed = harness({ trainingError: true });
+  const response = await (await failed.mcp.POST(request(tool('character_training_report', { characterId: 90000001 })))).json();
+  assert.equal(response.result.isError, true); assert.equal(response.result.content[0].text, 'Request failed.'); assert(!JSON.stringify(response).includes('OMIT_PRIVATE'));
 });

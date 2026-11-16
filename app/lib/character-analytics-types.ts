@@ -48,12 +48,25 @@ export type CharacterQueueEntry = {
   levelEndSp: number | null;
   trainingStartSp: number | null;
 };
+export type CharacterTrainingSchedule = {
+  /** The shared request-completion clock; these are reported dates, not completions. */
+  asOf: string;
+  elapsedEntries: number;
+  next24hEntries: number;
+  days2To7Entries: number;
+  days8To30Entries: number;
+  laterEntries: number;
+  missingFinishEntries: number;
+  /** Future finishes within 30 rolling days, grouped by UTC date. Gaps stay omitted. */
+  daily: { date: string; entries: number }[];
+};
 export type CharacterQueueAnalytics = {
   entryCount: number;
   timedEntryCount: number;
   passedFinishEntryCount: number;
   nextPlannedFinishAt: string | null;
   lastPlannedFinishAt: string | null;
+  schedule: CharacterTrainingSchedule;
   entries: CharacterQueueEntry[];
 };
 export type CharacterAttributesAnalytics = {

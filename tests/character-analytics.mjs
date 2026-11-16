@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const compile = name => ts.transpileModule(readFileSync(`app/lib/${name}.ts`, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const code = compile('character-analytics'), summaryCode = compile('overview-summary');
+const reportCode = compile('character-training-report');
 const now = Date.parse('2026-01-01T00:00:00Z'), stamp = new Date(now).toISOString(), characterId = 90000001;
 const skillScope = 'esi-skills.read_skills.v1', queueScope = 'esi-skills.read_skillqueue.v1', allScopes = [skillScope, queueScope];
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -37,6 +38,7 @@ function harness(options = {}) {
 }
 const read = h => h.read('synthetic-owner', { characterId });
 const sectionFor = dataset => ({ skills: 'skills', skill_queue: 'queue', attributes: 'attributes' })[dataset];
+const reporting = reader => load(reportCode, { require: name => { assert.equal(name, './character-analytics'); return { readCharacterAnalytics: reader }; } });
 
 test('analytics accepts only an explicit positive owned-character selector before any reads', async () => {
   for (const input of [null, [], {}, { characterId: 0 }, { characterId: -1 }, { characterId: 1.5 }, { characterId: NaN }, { characterId: Infinity }, { characterId: '90000001' }, { characterId: Number.MAX_SAFE_INTEGER + 1 }, { characterId, page: 1 }, { characterId, dataset: 'mail' }, { characterId, characterIds: [characterId] }, { characterId, scopes: allScopes }, { characterId, refreshToken: marker }, Object.create({ characterId })]) {
@@ -260,4 +262,107 @@ test('later cancellation preserves completed independent evidence while keeping 
   const h = harness({ read: async (args, signal, EveError, deadline) => { if (args.dataset === 'skill_queue') deadline.abort(); return envelope(args); } });
   const result = await read(h); assert.equal(h.calls.length, 3); assert.equal(result.status, 'partial');
   assert.equal(result.skills.status, 'ready'); assert.equal(result.queue.data, null); assert.equal(result.attributes.data, null);
+});
+
+test('schedule buckets partition exact rolling boundaries and retain missing finish dates', async () => {
+  const day = 86400000, offsets = [-1, 0, 1, day, day + 1, 7 * day, 7 * day + 1, 30 * day, 30 * day + 1, null, undefined];
+  const rows = offsets.map((offset, index) => queueEntry(index, { start_date: null, finish_date: offset == null ? offset : new Date(now + offset).toISOString() }));
+  const h = harness({ read: async args => envelope(args, args.dataset === 'skill_queue' ? rows : fixtureData(args.dataset)) });
+  const result = await read(h), schedule = result.queue.data.schedule;
+  assert.deepEqual(plain(schedule), { asOf: stamp, elapsedEntries: 2, next24hEntries: 2, days2To7Entries: 2, days8To30Entries: 2, laterEntries: 1, missingFinishEntries: 2, daily: [{ date: '2026-01-01', entries: 1 }, { date: '2026-01-02', entries: 2 }, { date: '2026-01-08', entries: 2 }, { date: '2026-01-31', entries: 1 }] });
+  assert.equal(result.queue.data.passedFinishEntryCount, schedule.elapsedEntries);
+  assert.equal(result.queue.data.timedEntryCount, 0, 'A known finish with an unknown start remains a planned date, not an active interval');
+  assert.equal(h.calls.length, 4, 'Derived schedule makes no additional reads');
+});
+test('future daily counts normalize offsets to UTC and omit gaps without inventing zero days', async () => {
+  const rows = [queueEntry(0, { start_date: null, finish_date: '2026-01-02T01:00:00+02:00' }), queueEntry(1, { start_date: null, finish_date: '2026-01-01T23:30:00-01:00' }), queueEntry(2, { start_date: null, finish_date: '2026-01-06T12:00:00.123456789Z' })];
+  const result = await read(harness({ read: async args => envelope(args, args.dataset === 'skill_queue' ? rows : fixtureData(args.dataset)) }));
+  assert.deepEqual(plain(result.queue.data.schedule.daily), [{ date: '2026-01-01', entries: 1 }, { date: '2026-01-02', entries: 1 }, { date: '2026-01-06', entries: 1 }]);
+  assert.equal(result.queue.data.schedule.next24hEntries, 1); assert.equal(result.queue.data.schedule.days2To7Entries, 2);
+});
+test('a thousand queue rows across distant years still produce at most 31 future UTC dates', async () => {
+  const noon = now + 43200000, day = 86400000;
+  const rows = Array.from({ length: 1000 }, (_, index) => queueEntry(index, { start_date: null, finish_date: index === 0 ? new Date(noon + 1).toISOString() : index <= 30 ? new Date(now + index * day).toISOString() : '9999-12-31T23:59:59Z' }));
+  const result = await read(harness({ now: () => noon, read: async args => envelope(args, args.dataset === 'skill_queue' ? rows : fixtureData(args.dataset)) }));
+  const schedule = result.queue.data.schedule;
+  assert.equal(schedule.daily.length, 31); assert.equal(schedule.daily[0].date, '2026-01-01'); assert.equal(schedule.daily[30].date, '2026-01-31');
+  assert(schedule.daily.every(row => row.entries === 1)); assert.equal(schedule.laterEntries, 969);
+  assert.equal(schedule.next24hEntries + schedule.days2To7Entries + schedule.days8To30Entries, 31);
+  assert.equal(schedule.asOf, result.generatedAt); assert.equal(result.queue.data.entryCount, 1000);
+});
+test('schedule classification is recomputed after a slow final source crosses a horizon boundary', async () => {
+  let clock = now;
+  const h = harness({ now: () => clock, read: async args => {
+    if (args.dataset === 'attributes') clock = now + 2;
+    return envelope(args, args.dataset === 'skill_queue' ? [queueEntry(0, { finish_date: new Date(now + 86400001).toISOString() })] : fixtureData(args.dataset));
+  } });
+  const result = await read(h), schedule = result.queue.data.schedule;
+  assert.equal(schedule.asOf, '2026-01-01T00:00:00.002Z'); assert.equal(schedule.asOf, result.generatedAt);
+  assert.equal(schedule.next24hEntries, 1); assert.equal(schedule.days2To7Entries, 0);
+});
+test('verified empty queue schedule differs from unavailable queue evidence', async () => {
+  const empty = await read(harness({ read: async args => envelope(args, args.dataset === 'skill_queue' ? [] : fixtureData(args.dataset)) }));
+  assert.deepEqual(plain(empty.queue.data.schedule), { asOf: stamp, elapsedEntries: 0, next24hEntries: 0, days2To7Entries: 0, days8To30Entries: 0, laterEntries: 0, missingFinishEntries: 0, daily: [] });
+  const missing = await read(harness({ connections: [{ characterId, scopes: [skillScope] }] }));
+  assert.equal(missing.queue.data, null); assert.equal(missing.queue.status, 'needs_permission');
+});
+test('compact training report bounds groups and future entries while preserving full returned counts', async () => {
+  const h = harness({
+    item: typeId => ({ typeId, name: `Public skill ${typeId}`, categoryId: 16, groupId: typeId, groupName: `Group ${typeId}` }),
+    read: async args => envelope(args, args.dataset === 'skills' ? { total_sp: 999999, skills: Array.from({ length: 14 }, (_, index) => skill(index + 1, { skillpoints_in_skill: index + 1 })) }
+      : args.dataset === 'skill_queue' ? Array.from({ length: 1000 }, (_, index) => queueEntry(index, { finish_date: new Date(now + (index + 1) * 86400000).toISOString() })) : fixtureData(args.dataset)),
+  });
+  const result = await reporting(h.read).readCharacterTrainingReport('synthetic-owner', { characterId });
+  assert.equal(h.calls.length, 4); assert.equal(result.skills.data.totalSp, 999999); assert.equal(result.skills.data.reportedSkillSp, 105);
+  assert.equal(result.skills.data.groupCount, 14); assert.equal(result.skills.data.topGroups.length, 10); assert.equal(result.skills.data.omittedGroups, 4);
+  assert.deepEqual(plain(result.skills.data.topGroups.map(row => row.groupId)), [14, 13, 12, 11, 10, 9, 8, 7, 6, 5]);
+  assert.equal(result.queue.data.entryCount, 1000); assert.equal(result.queue.data.upcoming.length, 20); assert.equal(result.queue.data.omittedFutureEntries, 980);
+  assert.deepEqual(plain(result.queue.data.upcoming.map(row => row.position)), Array.from({ length: 20 }, (_, index) => index));
+  assert.equal(result.queue.data.schedule.laterEntries, 970); assert.equal(result.queue.data.schedule.daily.length, 30);
+  assert(!Object.hasOwn(result.skills.data, 'skills')); assert(!Object.hasOwn(result.skills.data, 'groups')); assert(!Object.hasOwn(result.queue.data, 'entries'));
+  assert(result.queue.data.upcoming.every(row => !Object.hasOwn(row, 'trainingStartSp') && !Object.hasOwn(row, 'levelEndSp')));
+  assert(!JSON.stringify(result).includes(marker)); assert.deepEqual(plain(result.limits), { topSkillGroups: 10, upcomingQueueEntries: 20 });
+  assert.match(result.limitations.join(' '), /not evidence of active training/); assert.match(result.limitations.join(' '), /including those beyond 30 days/);
+});
+test('compact report orders equal future finishes by queue position and excludes elapsed or undated rows', async () => {
+  const rows = [queueEntry(9), queueEntry(3), queueEntry(1, { finish_date: stamp }), queueEntry(8, { finish_date: null })];
+  const h = harness({ read: async args => envelope(args, args.dataset === 'skill_queue' ? rows : fixtureData(args.dataset)) });
+  const result = await reporting(h.read).readCharacterTrainingReport('synthetic-owner', { characterId });
+  assert.deepEqual(plain(result.queue.data.upcoming.map(row => row.position)), [3, 9]); assert.equal(result.queue.data.omittedFutureEntries, 0);
+  assert.equal(result.queue.data.schedule.elapsedEntries, 1); assert.equal(result.queue.data.schedule.missingFinishEntries, 1);
+});
+test('compact projection whitelists every nested field rather than forwarding extra source data', async () => {
+  const value = await read(harness()), secret = 'OMIT_EXTRA_SOURCE_FIELD';
+  value.secret = secret; value.skills.secret = secret; value.skills.data.secret = secret;
+  value.skills.data.groups[0].secret = secret; value.skills.data.levelDistribution[0].secret = secret;
+  value.queue.data.secret = secret; value.queue.data.schedule.secret = secret; value.queue.data.schedule.daily[0].secret = secret;
+  value.queue.data.entries[0].secret = secret; value.attributes.data.secret = secret;
+  const before = JSON.stringify(value), result = reporting(() => { throw Error('Projection must not read'); }).projectCharacterTrainingReport(value);
+  assert(!JSON.stringify(result).includes(secret)); assert.equal(JSON.stringify(value), before, 'Projection does not mutate its source');
+  assert.equal(result.attributes.data.intelligence, 21); assert.equal(result.skills.freshness, 'fresh');
+});
+test('compact report preserves missing permission and error sections without zero substitutes', async () => {
+  for (const mode of ['missing', 'malformed']) {
+    const h = harness(mode === 'missing' ? { connections: [{ characterId, scopes: [] }] } : { read: async args => envelope(args, null) });
+    const result = await reporting(h.read).readCharacterTrainingReport('synthetic-owner', { characterId });
+    assert.equal(result.status, mode === 'missing' ? 'needs_permission' : 'error');
+    for (const section of [result.skills, result.queue, result.attributes]) { assert.equal(section.data, null); assert.equal(section.retrievedAt, null); assert.equal(section.freshness, 'unknown'); }
+    assert.equal(h.calls.length, mode === 'missing' ? 1 : 4);
+  }
+});
+test('compact report retains strict selector validation and ownership before dataset reads', async () => {
+  for (const input of [null, { characterId: 0 }, { characterId, entity: 'corporation' }, { characterId, view: 'personal' }, { characterId, limit: 100 }, { characterId, userId: 'other-owner' }]) {
+    const h = harness(); await assert.rejects(reporting(h.read).readCharacterTrainingReport('synthetic-owner', input), error => error.status === 400); assert.equal(h.calls.length, 0);
+  }
+  const wrongOwner = harness({ connections: [{ characterId: characterId + 1, scopes: allScopes }] });
+  await assert.rejects(reporting(wrongOwner.read).readCharacterTrainingReport('synthetic-owner', { characterId }), error => error.status === 404);
+  assert.equal(wrongOwner.calls.length, 1);
+});
+test('compact reader forwards the exact owner selector and signal once and suppresses cancelled late output', async () => {
+  const value = await read(harness()), controller = new AbortController(), input = { characterId };
+  let calls = 0;
+  const service = reporting(async (user, selected, options) => { calls++; assert.equal(user, 'synthetic-owner'); assert.equal(selected, input); assert.equal(options.signal, controller.signal); return value; });
+  await service.readCharacterTrainingReport('synthetic-owner', input, { signal: controller.signal }); assert.equal(calls, 1);
+  const cancelled = reporting(async () => { controller.abort(); return value; });
+  await assert.rejects(cancelled.readCharacterTrainingReport('synthetic-owner', input, { signal: controller.signal }));
 });
