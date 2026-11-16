@@ -157,6 +157,8 @@ The `character_overview` chat tool returns the same personal overview as the das
 
 The **Overview** workspace shows one selected character at a time. Click **Load overview** to fetch wallet balance, skill queue, personal market orders, industry jobs, contracts and freelance jobs. Each card shows its own coverage and ESI cache information. Refreshes are manual; switching characters, workspaces or pages clears displayed results and cancels the browser request. Results are held in memory, with no account-data history, browser storage, background polling or new database tables.
 
+After loading an overview, supported cards offer a shortcut to the matching detail workspace with the same selected character and personal or corporation context. Personal cards open wallet activity, training, orders, industry or contracts. Corporation cards open the matching wallet balances, industry, contracts, projects, extraction or freelance view. Corporation wallet shortcuts do not guess a journal division, and personal freelance has no shortcut until a personal detail view is available. The destination opens empty and waits for its own manual Load action; navigation does not fetch account data or enable wallet history. Changing the connection, permissions or navigation invalidates old shortcuts.
+
 The **Corporation operations** overview separately summarizes wallet balances, contracts, industry jobs, active projects, moon extraction schedules and freelance jobs. Wallet totals cover only returned divisions and show how many of the seven divisions are available. In **Connections**, select the optional reads you need:
 
 | Option | Additional read scope | Access requirement |

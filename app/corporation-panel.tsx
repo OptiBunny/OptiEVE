@@ -22,9 +22,9 @@ const hints: Record<ListView, string> = {
 };
 const statuses = { ready: 'Available', partial: 'Limited coverage', needs_permission: 'Permission needed', unavailable: 'Unavailable', error: 'Could not load' };
 const time = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-export default function CorporationPanel({ characters, openConnections }: { characters: Character[]; openConnections: () => void }) {
-  const [characterId, setCharacterId] = useState(characters[0]?.characterId ?? 0);
-  const [view, setView] = useState<ListView>('wallets');
+export default function CorporationPanel({ characters, openConnections, initialCharacterId, initialView = 'wallets' }: { characters: Character[]; openConnections: () => void; initialCharacterId?: number; initialView?: 'wallets' | 'projects' | 'extractions' | 'freelance_jobs' }) {
+  const [characterId, setCharacterId] = useState(initialCharacterId === undefined ? characters[0]?.characterId ?? 0 : characters.some(character => character.characterId === initialCharacterId) ? initialCharacterId : 0);
+  const [view, setView] = useState<ListView>(initialView);
   const [includeNames, setIncludeNames] = useState(false);
   const [result, setResult] = useState<CorporationWorkspace | null>(null);
   const [current, setCurrent] = useState<CorporationWorkspaceRequest | null>(null);
@@ -37,6 +37,7 @@ export default function CorporationPanel({ characters, openConnections }: { char
     setResult(null); setCurrent(null); setTrail([]); setBusy(false); setError(''); setSignedOut(false);
   }
   async function load(args: CorporationWorkspaceRequest, history: CorporationWorkspaceRequest[] = []) {
+    if (!characters.some(character => character.characterId === characterId) || args.characterId !== characterId) return;
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     setResult(null); setCurrent(args); setTrail(history); setBusy(true); setError(''); setSignedOut(false);
@@ -52,7 +53,7 @@ export default function CorporationPanel({ characters, openConnections }: { char
   return <section aria-labelledby="corporation-heading">
     <div className="overview-heading"><div><p className="eyebrow">ON DEMAND · READ ONLY</p><h2 id="corporation-heading">Corporation workspace</h2></div><button className="small" onClick={openConnections}>Manage connections</button></div>
     <div className="overview-controls">
-      <div><label htmlFor="corporation-character">Character</label><select id="corporation-character" value={characterId} onChange={event => { clear(); setCharacterId(Number(event.target.value)); }}>{characters.map(character => <option key={character.characterId} value={character.characterId}>{character.name}</option>)}</select></div>
+      <div><label htmlFor="corporation-character">Character</label><select id="corporation-character" value={characterId} onChange={event => { clear(); setCharacterId(Number(event.target.value)); }}>{!characterId && <option value={0}>Choose a connected character</option>}{characters.map(character => <option key={character.characterId} value={character.characterId}>{character.name}</option>)}</select></div>
       <div><label htmlFor="corporation-view">Browse</label><select id="corporation-view" value={view} onChange={event => { clear(); setView(event.target.value as ListView); }}><optgroup label="Finance & contracts"><option value="wallets">Wallet divisions</option><option value="order_history">Market order history</option><option value="contracts">Contracts</option></optgroup><optgroup label="Industry & infrastructure"><option value="assets">Assets</option><option value="blueprints">Blueprint library</option><option value="facilities">Facilities</option><option value="structures">Structure fuel & services</option><option value="extractions">Mining extractions</option></optgroup><optgroup label="Projects"><option value="projects">Active projects</option><option value="freelance_jobs">Freelance jobs</option></optgroup></select></div>
       <button className="button secondary" disabled={busy || !characterId} onClick={() => void load(current ?? { characterId, view, ...(includeNames ? { includeNames: true } : {}) }, trail)}>{busy ? 'Loading corporation data…' : result ? 'Refresh this view' : 'Load corporation data'}</button>
       {busy && <button className="small" onClick={clear}>Cancel</button>}

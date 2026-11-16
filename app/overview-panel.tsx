@@ -4,11 +4,12 @@ import type { Character } from './lib/connection-client';
 import { ConnectionResponseError } from './lib/connection-client';
 import { formatMetric, overviewRequest } from './lib/overview-client';
 import type { Overview, OverviewView } from './lib/overview-types';
+import { overviewDestination, type OverviewShortcut } from './lib/overview-navigation';
 
 const statusLabels = { ready: 'Available', partial: 'Limited coverage', needs_permission: 'Permission needed', unavailable: 'Unavailable', error: 'Could not load' };
 const time = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
-export default function OverviewPanel({ characters, openConnections }: { characters: Character[]; openConnections: () => void }) {
+export default function OverviewPanel({ characters, openConnections, onOpenSection }: { characters: Character[]; openConnections: () => void; onOpenSection?: (shortcut: OverviewShortcut) => void }) {
   const [characterId, setCharacterId] = useState(characters[0]?.characterId ?? 0);
   const [view, setView] = useState<OverviewView>('personal');
   const [result, setResult] = useState<Overview | null>(null);
@@ -16,9 +17,10 @@ export default function OverviewPanel({ characters, openConnections }: { charact
   const [error, setError] = useState('');
   const [signedOut, setSignedOut] = useState(false);
   const request = useRef<AbortController | null>(null);
-  useEffect(() => () => request.current?.abort(), []);
+  const accepted = useRef<Overview | null>(null);
+  useEffect(() => () => { accepted.current = null; request.current?.abort(); }, []);
   function clear() {
-    request.current?.abort(); request.current = null;
+    accepted.current = null; request.current?.abort(); request.current = null;
     setResult(null); setBusy(false); setError(''); setSignedOut(false);
   }
   async function load() {
@@ -26,7 +28,7 @@ export default function OverviewPanel({ characters, openConnections }: { charact
     const controller = new AbortController(); request.current = controller; setBusy(true);
     try {
       const next = await overviewRequest({ characterId, view }, controller.signal);
-      if (request.current === controller && !controller.signal.aborted) setResult(next);
+      if (request.current === controller && !controller.signal.aborted) { accepted.current = next; setResult(next); }
     } catch (failure) {
       if (request.current !== controller || controller.signal.aborted) return;
       setError((failure as Error).message);
@@ -56,6 +58,7 @@ export default function OverviewPanel({ characters, openConnections }: { charact
         <div className="overview-card-heading"><h3>{section.title}</h3><span className={`data-status data-status-${section.status}`}>{statusLabels[section.status]}</span></div>
         {section.metrics.length > 0 && <dl className="overview-metrics">{section.metrics.map((metric, index) => <div key={`${metric.label}-${index}`}><dt>{metric.label}</dt><dd>{formatMetric(metric)}{metric.unit === 'ISK' && <span className="metric-unit"> ISK</span>}</dd></div>)}</dl>}
         <p className="overview-message">{section.message}</p>
+        {onOpenSection && overviewDestination({ sectionId: section.id, characterId: result.characterId, view: result.view }) && <p><button type="button" className="small" disabled={busy} onClick={() => { if (accepted.current === result && request.current && !request.current.signal.aborted) onOpenSection({ sectionId: section.id, characterId: result.characterId, view: result.view }); }}>{overviewDestination({ sectionId: section.id, characterId: result.characterId, view: result.view })!.label}</button><span className="overview-hint"> Selects this character and workspace; load details there.</span></p>}
         {section.status === 'needs_permission' && <button className="small" onClick={openConnections}>Review access</button>}
         <details className="overview-freshness"><summary>Coverage &amp; freshness</summary><p>Coverage: {section.coverage}. A recent fetch can still contain cached EVE data.</p>{section.retrievedAt && <p>Fetched: {time(section.retrievedAt)}</p>}{section.lastModified && <p>ESI last modified: {time(section.lastModified)}</p>}{section.cacheExpires && <p>ESI cache expiry: {time(section.cacheExpires)}</p>}{section.cacheControl && <p>ESI cache policy: <code>{section.cacheControl}</code></p>}<p>Required read permission: <code>{section.scope}</code></p></details>
       </article>)}</div>
