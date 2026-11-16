@@ -52,48 +52,98 @@ async function key(){try{const raw=unb64(runtime().EVE_TOKEN_KEY||"");if(raw.len
 async function encrypt(value:unknown,binding:string){const iv=crypto.getRandomValues(new Uint8Array(12));const result=await crypto.subtle.encrypt({name:"AES-GCM",iv,additionalData:new TextEncoder().encode(binding)},await key(),new TextEncoder().encode(JSON.stringify(value)));return `${b64(iv)}.${b64(new Uint8Array(result))}`;}
 async function decrypt<T>(value:string,binding:string):Promise<T>{const storageKey=await key();try{const [iv,data]=value.split(".");const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(iv),additionalData:new TextEncoder().encode(binding)},storageKey,unb64(data));return JSON.parse(new TextDecoder().decode(plain));}catch{throw new EveError("Saved authorization could not be read. Reconnect this character.",401);}}
 function headers(){return {"User-Agent":`OptiEVE/1.0 (${origin()})`,"Accept":"application/json","X-Compatibility-Date":"2026-10-31"};}
-async function fetchTimed(url:string,init:RequestInit={}){try{init.signal?.throwIfAborted();const timeout=AbortSignal.timeout(20000),signal=init.signal?AbortSignal.any([timeout,init.signal]):timeout;return await fetch(url,{...init,redirect:"manual",signal});}catch{throw new EveError("EVE could not be reached. Please try again shortly.",502);}}
+// These are operational response limits, not provider completeness guarantees.
+const ESI_RESPONSE_BYTES=8*1024*1024,AUTH_RESPONSE_BYTES=256*1024,METADATA_RESPONSE_BYTES=1024*1024;
+const responseSignals=new WeakMap<Response,AbortSignal>();
+function cancelBody(response:Response){try{void response.body?.cancel().catch(()=>{});}catch{}}
+async function fetchTimed(url:string,init:RequestInit={}){try{
+ init.signal?.throwIfAborted();const timeout=AbortSignal.timeout(20000),signal=init.signal?AbortSignal.any([timeout,init.signal]):timeout;
+ const response=await fetch(url,{...init,redirect:"manual",signal});
+ if(signal.aborted){cancelBody(response);signal.throwIfAborted();}
+ responseSignals.set(response,signal);return response;
+}catch{throw new EveError("EVE could not be reached. Please try again shortly.",502);}}
 function rateLimitMessage(response:Response){
  const value=response.headers.get(response.status===420?'x-esi-error-limit-reset':'retry-after');
  const seconds=value!==null&&/^\d+$/.test(value)?Number(value):NaN;
  return `EVE's request limit was reached. ${Number.isSafeInteger(seconds)&&seconds>=0?`Retry after ${seconds} seconds.`:'Please wait before retrying.'}`;
 }
-async function boundedJson(response:Response,maximum:number,signal?:AbortSignal):Promise<unknown>{
- if(!Number.isSafeInteger(maximum)||maximum<1||maximum>2*1024*1024)throw new EveError("Invalid private response limit.");
- const declared=response.headers.get('content-length');
- if(declared!==null&&/^\d+$/.test(declared)&&Number(declared)>maximum){void response.body?.cancel().catch(()=>{});throw new EveError("EVE returned more data than this history capture accepts.",502);}
- if(!response.body)throw new EveError("EVE returned an unreadable response.",502);
- const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0,done=false;
- let cancel=()=>{};const interrupted=new Promise<never>((_,reject)=>{cancel=()=>reject(new Error('cancelled'));signal?.addEventListener('abort',cancel,{once:true});});void interrupted.catch(()=>{});
+async function readJsonBody(response:Response,maximum:number,signal?:AbortSignal):Promise<unknown>{
+ const transport=responseSignals.get(response),active=transport&&signal&&transport!==signal?AbortSignal.any([transport,signal]):transport??signal;
+ let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,done=false,cancel=()=>{};
  try{
-  while(true){signal?.throwIfAborted();const part=await Promise.race([reader.read(),interrupted]);if(part.done){done=true;break;}size+=part.value.byteLength;if(size>maximum)throw new EveError("EVE returned more data than this history capture accepts.",502);chunks.push(part.value);}
-  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
-  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  active?.throwIfAborted();
+  const declared=response.headers.get('content-length');
+  if(declared!==null&&/^\d+$/.test(declared)&&Number(declared)>maximum)throw new EveError("EVE returned more data than this request accepts.",502);
+  if(!response.body)throw new EveError("EVE returned an unreadable response.",502);
+  reader=response.body.getReader();let bytes=new Uint8Array(Math.min(maximum,16384)),size=0;
+  while(true){active?.throwIfAborted();const part=await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve,reject)=>{
+    const stop=()=>{active?.removeEventListener('abort',stop);reject(new Error('cancelled'));};cancel=stop;
+    active?.addEventListener('abort',stop,{once:true});if(active?.aborted){stop();return;}
+    reader!.read().then(part=>{active?.removeEventListener('abort',stop);resolve(part);},error=>{active?.removeEventListener('abort',stop);reject(error);});
+   });active?.throwIfAborted();if(part.done){done=true;break;}if(part.value.byteLength>maximum-size)throw new EveError("EVE returned more data than this request accepts.",502);const required=size+part.value.byteLength;
+   if(required>bytes.byteLength){const expanded=new Uint8Array(Math.min(maximum,Math.max(required,bytes.byteLength*2)));expanded.set(bytes.subarray(0,size));bytes=expanded;}
+   bytes.set(part.value,size);size=required;}
+  active?.throwIfAborted();const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,size)));active?.throwIfAborted();return value;
  }catch(error){if(error instanceof EveError)throw error;throw new EveError("EVE returned an unreadable or interrupted response.",502);}
- finally{signal?.removeEventListener('abort',cancel);if(!done)void reader.cancel().catch(()=>{});reader.releaseLock();}
+ finally{active?.removeEventListener('abort',cancel);if(reader){if(!done)void reader.cancel().catch(()=>{});reader.releaseLock();}else cancelBody(response);}
+}
+// Existing opt-in callers may still request only the original 1..2MiB range.
+async function boundedJson(response:Response,maximum:number,signal?:AbortSignal):Promise<unknown>{
+ if(!Number.isSafeInteger(maximum)||maximum<1||maximum>2*1024*1024){cancelBody(response);throw new EveError("Invalid private response limit.");}
+ return readJsonBody(response,maximum,signal);
 }
 async function jsonResponse(response:Response,maximum?:number,signal?:AbortSignal):Promise<unknown>{
- if(!response.ok){if(response.status===401)throw new EveError("EVE authorization expired or was revoked. Reconnect the character.",401,undefined,response.status);if(response.status===403)throw new EveError("EVE denied access. The character may be missing the required scope or corporation role.",403,undefined,response.status);if(response.status===420||response.status===429)throw new EveError(rateLimitMessage(response),429,undefined,response.status);throw new EveError(`EVE returned HTTP ${response.status}. Please retry or check the requested data.`,502,undefined,response.status);}
- if(response.status!==200)throw new EveError("EVE returned an unexpected response.",502,undefined,response.status);
- if(maximum!==undefined)return boundedJson(response,maximum,signal);
- try{return await response.json();}catch{throw new EveError("EVE returned an unreadable response.",502);}
+ if(!response.ok){cancelBody(response);if(response.status===401)throw new EveError("EVE authorization expired or was revoked. Reconnect the character.",401,undefined,response.status);if(response.status===403)throw new EveError("EVE denied access. The character may be missing the required scope or corporation role.",403,undefined,response.status);if(response.status===420||response.status===429)throw new EveError(rateLimitMessage(response),429,undefined,response.status);throw new EveError(`EVE returned HTTP ${response.status}. Please retry or check the requested data.`,502,undefined,response.status);}
+ if(response.status!==200){cancelBody(response);throw new EveError("EVE returned an unexpected response.",502,undefined,response.status);}
+ return maximum===undefined?readJsonBody(response,ESI_RESPONSE_BYTES,signal):boundedJson(response,maximum,signal);
 }
-async function oauthResponse(response:Response){
+async function oauthResponse(response:Response,signal?:AbortSignal){
  // Only the standard error code changes behavior; upstream descriptions stay private.
- if(response.status===400){let failure:unknown;try{failure=await response.json();}catch{}if(isRecord(failure)&&failure.error==='invalid_grant')throw new EveError("EVE authorization expired or was revoked. Reconnect the character.",401,undefined,400);}
- return jsonResponse(response);
+ if(response.status===400){let failure:unknown;try{failure=await readJsonBody(response,AUTH_RESPONSE_BYTES,signal);}catch(error){if(error instanceof EveError)throw new EveError(error.message,error.status,undefined,400);throw error;}if(isRecord(failure)&&failure.error==='invalid_grant')throw new EveError("EVE authorization expired or was revoked. Reconnect the character.",401,undefined,400);}
+ return jsonResponse(response,AUTH_RESPONSE_BYTES,signal);
 }
 function usableToken(value:unknown):value is string{return typeof value==='string'&&value.trim().length>0;}
 function usableTokenResponse(value:unknown,requireRefresh:true):value is TokenResponse&{refresh_token:string};
 function usableTokenResponse(value:unknown,requireRefresh:false):value is TokenResponse;
 function usableTokenResponse(value:unknown,requireRefresh:boolean):value is TokenResponse{return isRecord(value)&&usableToken(value.access_token)&&(requireRefresh?usableToken(value.refresh_token):value.refresh_token===undefined||usableToken(value.refresh_token));}
-let jwkCache:{expires:number;keys:SigningKey[]}|null=null;
+type SigningKeyCache={expires:number;keys:SigningKey[]};
+let jwkCache:SigningKeyCache|null=null;
+function rsaInteger(value:unknown):value is string{
+ if(typeof value!=='string'||!value.length||!/^[A-Za-z0-9_-]+$/.test(value))return false;
+ try{
+  const raw=atob(value.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(value.length/4)*4,'='));
+  // RSA parameters are positive integers; RFC 7518 Base64urlUInt uses the
+  // shortest unsigned representation, without padding or noncanonical bits.
+  return raw.length>0&&raw.charCodeAt(0)>0&&btoa(raw).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')===value;
+ }catch{return false;}
+}
+async function signingKeys(signal?:AbortSignal):Promise<SigningKeyCache>{
+ const data=await connectionStage('signing_keys',async()=>jsonResponse(await fetchTimed(JWKS,{headers:headers(),signal}),METADATA_RESPONSE_BYTES,signal));
+ if(!isRecord(data)||!Array.isArray(data.keys))throw new EveError("EVE signing keys were unavailable.",502,'signing_keys');
+ // RFC 7517 permits heterogeneous sets and optional metadata. Ignore members
+ // without the required object/key-type shape; never dereference them later.
+ const keys=data.keys.filter((value):value is SigningKey=>isRecord(value)&&typeof value.kty==='string'&&value.kty.length>0);
+ if(data.keys.length&&!keys.length)throw new EveError("EVE signing keys were unavailable.",502,'signing_keys');
+ return {expires:Date.now()+300000,keys};
+}
 async function verifyJwt(token:string,clientId:string,signal?:AbortSignal):Promise<Claims>{
  try{
   const parts=token.split(".");if(parts.length!==3)throw new Error();const head=JSON.parse(new TextDecoder().decode(decode64(parts[0])));if(head.alg!=="RS256"||typeof head.kid!=="string")throw new Error();
-  if(!jwkCache||jwkCache.expires<Date.now()){const data=await connectionStage('signing_keys',async()=>jsonResponse(await fetchTimed(JWKS,{headers:headers(),signal})));if(!isRecord(data)||!Array.isArray(data.keys))throw new EveError("EVE signing keys were unavailable.",502,'signing_keys');jwkCache={expires:Date.now()+300000,keys:data.keys as SigningKey[]};}
-  let jwk=jwkCache.keys.find(k=>k.kid===head.kid&&k.kty==="RSA");if(!jwk){const data=await connectionStage('signing_keys',async()=>jsonResponse(await fetchTimed(JWKS,{headers:headers(),signal})));if(!isRecord(data)||!Array.isArray(data.keys))throw new EveError("EVE signing keys were unavailable.",502,'signing_keys');jwkCache={expires:Date.now()+300000,keys:data.keys as SigningKey[]};jwk=jwkCache.keys.find(k=>k.kid===head.kid&&k.kty==="RSA");}if(!jwk)throw new Error();
-  const publicKey=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);if(!await crypto.subtle.verify("RSASSA-PKCS1-v1_5",publicKey,decode64(parts[2]),new TextEncoder().encode(`${parts[0]}.${parts[1]}`)))throw new Error();
+  const cacheBeforeRead=jwkCache;let selected=jwkCache,fetched=false;if(!selected||selected.expires<Date.now()){selected=await signingKeys(signal);fetched=true;}
+  let jwk=selected.keys.find(k=>k.kid===head.kid&&k.kty==="RSA");if(!jwk){selected=await signingKeys(signal);fetched=true;jwk=selected.keys.find(k=>k.kid===head.kid&&k.kty==="RSA");}
+  // A valid but unrelated/empty set keeps the existing bounded unknown-kid
+  // refresh behavior. It does not establish that a supplied token is valid.
+  // An unrelated response must not evict a cache replaced during either read.
+  if(!jwk){if(jwkCache===cacheBeforeRead)jwkCache=selected;throw new Error();}
+  const cacheBeforeImport=jwkCache;let publicKey:CryptoKey;
+  try{if(!rsaInteger(jwk.n)||!rsaInteger(jwk.e))throw new Error();publicKey=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);}catch{
+   // A failed old import must not erase a newer concurrent valid cache.
+   if(jwkCache===selected)jwkCache=null;
+   throw new EveError("EVE signing keys were unavailable.",502,'signing_keys');
+  }
+  // Publish a newly fetched matching set only after its selected key imports.
+  if(fetched&&jwkCache===cacheBeforeImport)jwkCache=selected;
+  if(!await crypto.subtle.verify("RSASSA-PKCS1-v1_5",publicKey,decode64(parts[2]),new TextEncoder().encode(`${parts[0]}.${parts[1]}`)))throw new Error();
   const claims=JSON.parse(new TextDecoder().decode(decode64(parts[1]))) as Claims,audiences=Array.isArray(claims.aud)?claims.aud:[claims.aud],now=Date.now()/1000;
   if(!["https://login.eveonline.com","https://login.eveonline.com/","login.eveonline.com"].includes(claims.iss)||!audiences.includes(clientId)||!audiences.includes("EVE Online")||!Number.isFinite(claims.exp)||claims.exp<=now||(claims.nbf!==undefined&&(!Number.isFinite(claims.nbf)||claims.nbf>now+60))||!/^CHARACTER:EVE:\d+$/.test(claims.sub))throw new Error();return claims;
  }catch(error){if(error instanceof EveError&&(error.reason||error.status>=500))throw error;throw new EveError("EVE sign-in could not be verified. Please start sign-in again.",401,'verification');}
@@ -113,7 +163,7 @@ function characterProfile(value:unknown,reason?:ConnectionFailureReason){
  if(!isRecord(value)||!positiveId(value.corporation_id)||typeof value.name!=='string'||!value.name.trim()||value.name.length>256||/[\x00-\x1f\x7f]/.test(value.name))throw new EveError("EVE returned an incomplete character profile.",502,reason);
  return {corporation_id:value.corporation_id,name:value.name.trim()};
 }
-async function publicCharacter(id:number,signal?:AbortSignal){return jsonResponse(await fetchTimed(`${ESI}/characters/${id}`,{headers:headers(),signal}));}
+async function publicCharacter(id:number,signal?:AbortSignal){return jsonResponse(await fetchTimed(`${ESI}/characters/${id}`,{headers:headers(),signal}),METADATA_RESPONSE_BYTES,signal);}
 export async function listConnections(user:string){const rows=await db().prepare("SELECT character_id,name,corporation_id,scopes FROM eve_connections WHERE user_id=? ORDER BY name").bind(user).all<Connection>();return rows.results.map(r=>({characterId:r.character_id,name:r.name,corporationId:r.corporation_id,scopes:JSON.parse(r.scopes)}));}
 export async function getStatus(user:string){const setting=await db().prepare("SELECT client_id FROM eve_settings WHERE user_id=?").bind(user).first<{client_id:string}>();return {configured:!!setting,clientId:setting?.client_id||null,setupUrl:origin(),callbackUrl:callbackUrl(),characters:await listConnections(user),scopes,characterDatasets:characterDatasetInfo,corporationFeatures:corporationReadFeatures,corporationDatasets:corporationDatasetInfo};}
 export async function saveConfig(user:string,clientId:unknown){if(typeof clientId!=="string"||!/^\b[a-zA-Z0-9_-]{16,128}\b$/.test(clientId))throw new EveError("Enter the Client ID from your EVE developer application.");await db().prepare("INSERT INTO eve_settings(user_id,client_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET client_id=excluded.client_id").bind(user,clientId).run();return {configured:true};}
@@ -216,7 +266,7 @@ export async function readCharacterData(user:string,args:CharacterReadArgs,signa
  // Check the user's stored grant before any refresh or upstream request.
  const {stored}=await activeToken(user,args.characterId,dataset.scope??undefined,signal);
  const response=await fetchTimed(ESI+request.path,{signal,method:request.method,headers:{...headers(),...(dataset.public?{}:{Authorization:`Bearer ${stored.accessToken}`}),...(request.body?{'Content-Type':'application/json'}:{})},body:request.body?JSON.stringify(request.body):undefined});
- const data=await jsonResponse(response);
+ const data=await jsonResponse(response,undefined,signal);
  if(dataset.result==='array'?!Array.isArray(data):dataset.result==='number'?typeof data!=='number'||!Number.isFinite(data):!data||typeof data!=='object'||Array.isArray(data))throw new EveError("EVE returned an unexpected dataset.",502);
  if(args.dataset==='freelance_jobs')validateFreelanceJobs(data);
  const pagination=dataset.pagination??'none',pageHeader=response.headers.get('x-pages'),pageCount=pageHeader?Number(pageHeader):null,pages=Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null;
@@ -240,7 +290,7 @@ export async function readPublicNames(ids:unknown,signal?:AbortSignal){
  if(!Array.isArray(ids)||ids.length<1||ids.length>200||!Array.from(ids).every(positiveId)||new Set(ids).size!==ids.length)throw new EveError('Supply 1–200 unique positive safe IDs for public name lookup.');
  const requested=new Set(ids as number[]);
  const response=await fetchTimed(`${ESI}/universe/names`,{signal,method:'POST',headers:{'User-Agent':'OptiEVE/1.0','Accept':'application/json','Content-Type':'application/json','X-Compatibility-Date':'2026-10-31'},body:JSON.stringify([...requested])});
- const value=await jsonResponse(response);
+ const value=await jsonResponse(response,undefined,signal);
  if(!Array.isArray(value)||value.length>requested.size)throw new EveError('EVE returned an unexpected public name lookup.',502);
  const seen=new Set<number>();
  const data=value.map(row=>{
@@ -261,7 +311,7 @@ export async function readCorporationData(user:string,args:CorporationReadArgs,s
  const pathRoot='pathRoot' in dataset?dataset.pathRoot:'corporations';
  const source=`${ESI}/${pathRoot}/${corporationId}${request.path}`;
  const response=await fetchTimed(source,{signal,method:request.method,headers:{...headers(),Authorization:`Bearer ${stored.accessToken}`,...(request.body?{'Content-Type':'application/json'}:{})},body:request.body?JSON.stringify(request.body):undefined});
- const data=await jsonResponse(response),paginated=dataset.pagination==='page',cursorPaginated=dataset.pagination==='cursor';
+ const data=await jsonResponse(response,undefined,signal),paginated=dataset.pagination==='page',cursorPaginated=dataset.pagination==='cursor';
  if(dataset.resultType==='array'?!Array.isArray(data):!isRecord(data))throw new EveError('EVE returned an unexpected corporation dataset.',502);
  if(args.dataset==='asset_names'||args.dataset==='asset_locations'){
   const requested=new Set(request.body),seen=new Set<number>();
