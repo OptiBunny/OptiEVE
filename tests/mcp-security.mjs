@@ -1103,3 +1103,28 @@ test('legacy batches still permit saved history status and reports', async () =>
   assert(values.every(value => value.result?.content[0]?.type === 'text' && !value.result.isError));
   assert.deepEqual(h.historyCalls.map(call => call.args.operation), ['status', 'report']);
 });
+
+
+test('saved history comparisons reuse the existing read-only tool with bounded report options', async () => {
+  const h = harness(), listed = (await (await h.mcp.POST(request(rpc('tools/list')))).json()).result.tools;
+  assert.equal(listed.length, 21);
+  const report = listed.find(item => item.name === 'wallet_history_report');
+  assert.deepEqual(report.inputSchema.properties.days.enum, [7, 30, 90, 365]);
+  assert.equal(report.inputSchema.properties.comparePrevious.type, 'boolean');
+  assert.equal(report.annotations.readOnlyHint, true); assert.equal(report.annotations.destructiveHint, false);
+  assert.deepEqual(listed.find(item => item.name === 'configure_wallet_history').inputSchema.properties.retentionDays.enum, [30, 90, 365]);
+  const selected = { characterId: 90000001, days: 7, comparePrevious: true };
+  const incoming = request(tool('wallet_history_report', selected));
+  assert.equal((await (await h.mcp.POST(incoming)).json()).result.isError, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.historyCalls[0].args)), { ...selected, operation: 'report' });
+  assert.equal(h.historyCalls[0].user, 'synthetic-user'); assert.equal(h.historyCalls[0].signal, incoming.signal);
+  for (const [name, args] of [
+    ['wallet_history_report', { ...selected, comparePrevious: 'true' }],
+    ['wallet_history_report', { ...selected, comparePrevious: null }],
+    ['wallet_history_report', { ...selected, days: 14 }],
+    ['wallet_history_status', { characterId: 90000001, comparePrevious: true }],
+    ['configure_wallet_history', { characterId: 90000001, enabled: true, retentionDays: 7 }],
+  ]) await rpcError(await h.mcp.POST(request(tool(name, args))), -32602, 1);
+  const denied = request(tool('wallet_history_report', selected)); denied.headers.delete('oai-authenticated-user-id');
+  assert.equal((await (await h.mcp.POST(denied)).json()).result.isError, true); assert.equal(h.historyCalls.length, 1);
+});

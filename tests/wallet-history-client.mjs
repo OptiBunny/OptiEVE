@@ -115,3 +115,79 @@ test('already-aborted history request never fetches and deadline interrupts stal
   let timeout; const h = harness(async () => new Response(new ReadableStream({ pull: () => new Promise(() => {}) }), { headers: { 'content-type': 'application/json' } }), { setTimeout: callback => { timeout = callback; return 1; }, clearTimeout: () => {} });
   const pending = h.fetchWalletHistory(args); await new Promise(resolve => setImmediate(resolve)); timeout(); await assert.rejects(pending, /timed out/);
 });
+
+const comparisonArgs = { ...args, comparePrevious: true };
+function comparisonFixture() {
+  return { ...fixture(), comparison: {
+    current: { startsAt: '2025-12-03T00:00:00.000Z', endsAt: stamp, retentionClipped: false },
+    previous: { startsAt: '2025-11-03T00:00:00.000Z', endsBefore: '2025-12-03T00:00:00.000Z', retentionClipped: false,
+      entries: 2, amountEntries: 2, missingAmountEntries: 0, earliest: '2025-12-01T00:00:00.000Z', latest: '2025-12-01T12:00:00.000Z',
+      totals: { incomingISK: '4.10', outgoingISK: '2.20', netISK: '1.90' } },
+    observedDelta: { incomingISK: '6.20', outgoingISK: '-2.10', netISK: '8.30' },
+  } };
+}
+
+test('comparison response binds exact adjacent windows and signed observed differences', () => {
+  const value = comparisonFixture();
+  assert.deepEqual(plain(client.walletHistoryResponse(value, comparisonArgs)), value);
+  value.settings.enabled = false; value.status = 'disabled';
+  assert.equal(client.walletHistoryResponse(value, comparisonArgs).comparison.observedDelta.netISK, '8.30');
+});
+
+for (const [label, change] of [
+  ['missing requested comparison', value => delete value.comparison],
+  ['wrong current start', value => value.comparison.current.startsAt = '2025-12-04T00:00:00.000Z'],
+  ['wrong current end', value => value.comparison.current.endsAt = '2026-01-02T00:00:00.001Z'],
+  ['wrong previous start', value => value.comparison.previous.startsAt = '2025-11-02T00:00:00.000Z'],
+  ['overlapping previous end', value => value.comparison.previous.endsBefore = stamp],
+  ['false current retention clipping', value => value.comparison.current.retentionClipped = true],
+  ['false previous retention clipping', value => value.comparison.previous.retentionClipped = true],
+  ['incorrect previous net', value => value.comparison.previous.totals.netISK = '1.91'],
+  ['incorrect previous counts', value => value.comparison.previous.entries++],
+  ['previous event on excluded end', value => value.comparison.previous.latest = '2025-12-03T00:00:00.000Z'],
+  ['previous event before start', value => value.comparison.previous.earliest = '2025-11-02T23:59:59.999Z'],
+  ['reversed previous dates', value => value.comparison.previous.earliest = stamp],
+  ['missing prior date', value => value.comparison.previous.earliest = null],
+  ['wrong incoming difference', value => value.comparison.observedDelta.incomingISK = '6.21'],
+  ['wrong outgoing difference sign', value => value.comparison.observedDelta.outgoingISK = '2.10'],
+  ['wrong net difference', value => value.comparison.observedDelta.netISK = '8.31'],
+  ['missing computable difference', value => value.comparison.observedDelta = null],
+  ['unexpected private comparison field', value => value.comparison.previous.events = [{ description: 'OMIT_PRIVATE' }]],
+  ['combined store limit exceeded', value => { value.comparison.previous.entries = 10000; value.comparison.previous.missingAmountEntries = 9998; value.comparison.observedDelta = null; }],
+  ['future timestamp in comparison', value => { value.report.earliest = value.report.latest = '2026-01-02T00:00:00.001Z'; value.report.daily[0].date = '2026-01-02'; }],
+]) test(`comparison client rejects ${label}`, () => {
+  const value = comparisonFixture(); change(value); assert.throws(() => client.walletHistoryResponse(value, comparisonArgs), /incomplete response/);
+});
+
+test('unrequested comparisons are rejected for ordinary reports and history controls', () => {
+  for (const input of [args, { ...args, comparePrevious: false }, { characterId, operation: 'status' }, { characterId, operation: 'capture' }]) {
+    assert.throws(() => client.walletHistoryResponse(comparisonFixture(), input), /incomplete response/);
+  }
+  assert.deepEqual(plain(client.walletHistoryResponse(fixture(), { ...args, comparePrevious: false })), fixture());
+});
+
+test('comparison preserves empty, missing and retention-clipped prior periods as unknown', () => {
+  const missing = comparisonFixture(); missing.comparison.previous.entries = 3; missing.comparison.previous.missingAmountEntries = 1; missing.comparison.observedDelta = null;
+  assert.equal(client.walletHistoryResponse(missing, comparisonArgs).comparison.observedDelta, null);
+  missing.comparison.observedDelta = { incomingISK: '6.20', outgoingISK: '-2.10', netISK: '8.30' };
+  assert.throws(() => client.walletHistoryResponse(missing, comparisonArgs), /incomplete response/);
+  const clipped = comparisonFixture(); clipped.settings.retentionDays = 30;
+  Object.assign(clipped.comparison.previous, { retentionClipped: true, entries: 0, amountEntries: 0, missingAmountEntries: 0, earliest: null, latest: null, totals: null });
+  clipped.comparison.observedDelta = null;
+  assert.equal(client.walletHistoryResponse(clipped, comparisonArgs).comparison.previous.retentionClipped, true);
+  clipped.comparison.previous.retentionClipped = false;
+  assert.throws(() => client.walletHistoryResponse(clipped, comparisonArgs), /incomplete response/);
+});
+
+test('seven-day comparison is a report option and never a retention setting', async () => {
+  const value = comparisonFixture(); value.report.days = 7;
+  Object.assign(value.comparison.current, { startsAt: '2025-12-26T00:00:00.000Z' });
+  Object.assign(value.comparison.previous, { startsAt: '2025-12-19T00:00:00.000Z', endsBefore: '2025-12-26T00:00:00.000Z', earliest: '2025-12-20T00:00:00.000Z', latest: '2025-12-20T12:00:00.000Z' });
+  const selected = { ...comparisonArgs, days: 7 }, calls = [];
+  const h = harness(async (_url, init) => { calls.push(JSON.parse(init.body)); return response(value); });
+  assert.equal((await h.fetchWalletHistory(selected)).report.days, 7); assert.deepEqual(calls, [selected]);
+  for (const input of [{ ...args, comparePrevious: 'true' }, { ...args, comparePrevious: null }, { characterId, operation: 'configure', enabled: true, retentionDays: 7 }, { characterId, operation: 'status', comparePrevious: true }]) {
+    await assert.rejects(h.fetchWalletHistory(input), /supported wallet history action/);
+  }
+  assert.equal(calls.length, 1);
+});

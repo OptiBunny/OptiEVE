@@ -473,6 +473,14 @@ try {
   check(enabled.settings.enabled === true && enabled.report.entries === 0, 'Enable must save settings without collecting');
   const savedReport = (await rpc('tools/call', { name: 'wallet_history_report', arguments: { characterId: 90000001, days: 365 } }, true)).result;
   check(!savedReport.isError && JSON.parse(savedReport.content[0].text).report.totals === null, 'MCP must read encrypted empty history without EVE access');
+  const compared = await history({ operation: 'report', days: 7, comparePrevious: true });
+  check(compared.report.days === 7 && compared.comparison.previous.entries === 0 && compared.comparison.observedDelta === null, 'Seven-day comparison must preserve unknown empty observations');
+  check(compared.settings.enabled === true && compared.settings.retentionDays === 365, 'A comparison must not alter history settings');
+  const comparedAt = Date.parse(compared.generatedAt);
+  check(Date.parse(compared.comparison.current.startsAt) === comparedAt - 7 * 86400000 && Date.parse(compared.comparison.previous.startsAt) === comparedAt - 14 * 86400000 && compared.comparison.previous.endsBefore === compared.comparison.current.startsAt, 'Comparison boundaries must be adjacent and selection-bound');
+  const comparedMcp = (await rpc('tools/call', { name: 'wallet_history_report', arguments: { characterId: 90000001, days: 7, comparePrevious: true } }, true)).result;
+  check(!comparedMcp.isError && JSON.parse(comparedMcp.content[0].text).comparison.observedDelta === null, 'MCP comparison must read encrypted history without EVE access');
+  expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'configure', enabled: true, retentionDays: 7 }), { ...identity, origin }), 400);
   const paused = await history({ operation: 'configure', enabled: false });
   check(paused.settings.enabled === false && paused.settings.retentionDays === 365, 'Pause must preserve server retention');
   const mutationBatch = await post('/mcp', JSON.stringify([{ jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'clear_wallet_history', arguments: { characterId: 90000001, confirm: 'delete_wallet_history' } } }]), identity);
@@ -481,7 +489,7 @@ try {
   check(erased.settings.enabled === false && erased.lastCapture === null && erased.report.totals === null, 'Erase must leave no financial report and collection off');
   expectStatus(await post('/api/eve/disconnect', JSON.stringify({ characterId: 90000001 }), { ...identity, origin }), 200);
   expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'status' }), { ...identity, origin }), 404);
-  console.log(`PASS: actual package start; 10 rejected-body request sequences without retries; streamed/oversized requests; overview authorization/cache boundaries; empty synthetic account; MCP manufacturing catalog/requirements; wallet history migrations/encryption/off-by-default/pause/erase/ownership/batch controls without external data; HTML, ${assetUrls.length} assets and React server components`);
+  console.log(`PASS: actual package start; 10 rejected-body request sequences without retries; streamed/oversized requests; overview authorization/cache boundaries; empty synthetic account; MCP manufacturing catalog/requirements; wallet history migrations/encryption/off-by-default/comparison/pause/erase/ownership/batch controls without external data; HTML, ${assetUrls.length} assets and React server components`);
 } catch (error) {
   console.error(`FAIL: ${stage}: ${error instanceof Failure ? error.message : 'validation operation could not complete'}`);
   process.exitCode = 1;

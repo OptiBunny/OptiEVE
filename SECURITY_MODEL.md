@@ -164,6 +164,16 @@ payload accepts at most 10,000 retained events and one MiB before encryption.
 Malformed/conflicting data or a full store fail without a partial commit. Reports
 use exact-decimal cash flow and preserve missing amounts, gaps and source
 freshness; they never establish complete calendar coverage or realized profit.
+Optional previous-period comparisons use the same owned, decrypted payload and
+current authorization recheck as the requested report. Report ranges are 7, 30,
+90 or 365 days; retention remains 30/90/365 days. Adjacent comparison windows
+exclude future timestamps and assign the shared boundary only to the current
+period. Both periods obey current retention and share the 10,000-event bound.
+Signed exact-decimal observed differences are withheld for empty totals, missing
+amounts or retention-clipped windows. A numeric difference does not establish
+complete calendar coverage or growth. Browser validation binds the optional
+comparison, window boundaries, retention flags, counts and differences to the
+requested selection; no additional EVE reads, persisted fields or writes occur.
 Retention choices are 30, 90 or 365 days. Reads filter expired events, and history
 mutations prune them physically; no scheduled collector or cleanup is installed.
 Pause retains events. Erase clears the payload and disables collection.
