@@ -17,6 +17,7 @@ import OrderAnalyticsPanel from './order-analytics-panel';
 import MarketTransactionsPanel from './market-transactions-panel';
 import ContractsAnalyticsPanel from './contracts-analytics-panel';
 import CalendarAnalyticsPanel from './calendar-analytics-panel';
+import PersonalFreelancePanel from './personal-freelance-panel';
 import BlueprintAnalyticsPanel from './blueprint-analytics-panel';
 import WorkspaceNavigation, { type WorkspaceDestination } from './workspace-navigation';
 export default function ConnectionPanel(){
@@ -83,6 +84,7 @@ export default function ConnectionPanel(){
   {tab==='training'&&status&&!statusLoading&&handoffIsCurrent&&<CharacterAnalyticsPanel key={'training-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='clones'&&status&&!statusLoading&&<CloneAnalyticsPanel key={'clones-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='calendar'&&status&&!statusLoading&&<CalendarAnalyticsPanel key={'calendar-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='freelance'&&status&&!statusLoading&&handoffIsCurrent&&<PersonalFreelancePanel key={'freelance-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='orders'&&status&&!statusLoading&&handoffIsCurrent&&<OrderAnalyticsPanel key={'orders-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='market'&&status&&!statusLoading&&<MarketTransactionsPanel key={'market-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='contracts'&&status&&!statusLoading&&handoffIsCurrent&&<ContractsAnalyticsPanel key={'contracts-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} initialEntity={seed?.target.entity} characters={status.characters} openConnections={()=>selectTab('connections')}/>}

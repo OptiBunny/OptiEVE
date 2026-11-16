@@ -3,7 +3,7 @@ import type { OverviewSectionId, OverviewView } from './overview-types';
 // A shortcut carries selection only. Detail readers still enforce ownership and grants.
 export type OverviewShortcut = { sectionId: OverviewSectionId; characterId: number; view: OverviewView };
 export type OverviewDestination = {
-  destination: 'wallet' | 'training' | 'orders' | 'jobs' | 'contracts' | 'corporation';
+  destination: 'wallet' | 'training' | 'orders' | 'jobs' | 'contracts' | 'corporation' | 'freelance';
   label: string;
   entity?: 'character' | 'corporation';
   corporationView?: 'wallets' | 'projects' | 'extractions' | 'freelance_jobs';
@@ -15,6 +15,7 @@ const targets: Record<OverviewView, Partial<Record<OverviewSectionId, OverviewDe
     orders: { destination: 'orders', label: 'Open personal orders' },
     industry: { destination: 'jobs', entity: 'character', label: 'Open personal industry jobs' },
     contracts: { destination: 'contracts', entity: 'character', label: 'Open personal contracts' },
+    freelance: { destination: 'freelance', label: 'Open personal freelance jobs' },
   },
   corporation: {
     wallet: { destination: 'corporation', corporationView: 'wallets', label: 'Open corporation wallet divisions' },
