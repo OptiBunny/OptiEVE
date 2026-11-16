@@ -111,16 +111,20 @@ export function createManufacturingCatalogStatusReader(dependencies: StatusDepen
     const now = dependencies.now ?? Date.now;
     let current: { buildNumber: number; releaseDate: string } | null = null;
     let cacheHeaders: Headers | null = null;
+    let response: Response | undefined, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       signal.throwIfAborted();
-      const response = await (dependencies.fetch ?? fetch)(latestUrl, { method: 'GET', headers: { Accept: 'application/jsonl, application/x-ndjson, text/plain', 'User-Agent': 'OptiEVE/1.0 (public SDE freshness check)' }, redirect: 'manual', signal });
+      response = await (dependencies.fetch ?? fetch)(latestUrl, { method: 'GET', headers: { Accept: 'application/jsonl, application/x-ndjson, text/plain', 'User-Agent': 'OptiEVE/1.0 (public SDE freshness check)' }, redirect: 'manual', signal });
       if (response.status !== 200 || !response.body) throw new Error('Public manifest unavailable');
       const declared = response.headers.get('content-length'); if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > 8192)) throw new Error('Public manifest size');
-      const reader = response.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
-      try { while (true) { const chunk = await reader.read(); if (chunk.done) break; bytes += chunk.value.byteLength; if (bytes > 8192) { await reader.cancel(); throw new Error('Public manifest size'); } chunks.push(chunk.value); } }
-      finally { reader.releaseLock(); }
-      const joined = new Uint8Array(bytes); let offset = 0; for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.length; }
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(joined);
+      reader = response.body.getReader();
+      const joined = new Uint8Array(8192); let bytes = 0;
+      while (true) {
+        const chunk = await reader.read(); if (chunk.done) break;
+        if (chunk.value.byteLength > joined.byteLength - bytes) throw new Error('Public manifest size');
+        joined.set(chunk.value, bytes); bytes += chunk.value.byteLength;
+      }
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(joined.subarray(0, bytes));
       const lines: unknown[] = text.trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
       const matches = lines.filter(row => record(row) && row._key === 'sde');
       if (matches.length !== 1 || !record(matches[0]) || !integer(matches[0].buildNumber) || typeof matches[0].releaseDate !== 'string' ||
@@ -129,6 +133,10 @@ export function createManufacturingCatalogStatusReader(dependencies: StatusDepen
       cacheHeaders = response.headers;
       signal.throwIfAborted();
     } catch { current = null; cacheHeaders = null; /* Never expose arbitrary response text, URLs or exception details. */ }
+    finally {
+      if (reader) { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+      else if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {});
+    }
     const completedAt = now(), checkedAt = new Date(completedAt).toISOString(), cacheExpires = cacheHeaders ? catalogExpiry(cacheHeaders, completedAt) : null;
     const staleOrUnknown = cacheExpires === null || Date.parse(cacheExpires) <= completedAt;
     const status = !current || staleOrUnknown || current.buildNumber < catalog.provenance.buildNumber || current.buildNumber === catalog.provenance.buildNumber && current.releaseDate !== catalog.provenance.releaseDate ? 'unverified' : current.buildNumber === catalog.provenance.buildNumber ? 'current' : 'update_required';
