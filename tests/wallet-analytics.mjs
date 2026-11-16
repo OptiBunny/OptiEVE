@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 const code = ts.transpileModule(readFileSync('app/lib/wallet-analytics.ts', 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const reportCode = ts.transpileModule(readFileSync('app/lib/wallet-activity-report.ts', 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const summaryCode = ts.transpileModule(readFileSync('app/lib/overview-summary.ts', 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const summaryModule = { exports: {} };
 vm.runInNewContext(summaryCode, { module: summaryModule, exports: summaryModule.exports, Date });
@@ -28,6 +29,11 @@ function harness(options = {}) {
   const fixtureModule = { exports: {} };
   vm.runInNewContext(code, { module: fixtureModule, exports: fixtureModule.exports, Date, AbortSignal: { any: AbortSignal.any.bind(AbortSignal), timeout: ms => { assert.equal(ms, 55000); return deadline.signal; } }, require: path => { if (path === './overview-summary') return summaryModule.exports; assert.equal(path, './eve'); return { EveError, listConnections: deps.connections, readEve: deps.journal }; } });
   return { read: fixtureModule.exports.createWalletAnalyticsReader(deps), calls, deadline };
+}
+function reporting(reader) {
+  const module = { exports: {} };
+  vm.runInNewContext(reportCode, { module, exports: module.exports, require: name => { assert.equal(name, './wallet-analytics'); return { readWalletAnalytics: reader }; } });
+  return module.exports;
 }
 
 test('one selected journal page provides exact cash-flow totals and fixed safe categories', async () => {
@@ -191,4 +197,83 @@ test('independent calls never accumulate prior pages or retain prior journal rec
   const h = harness({ journal: async (_user, input) => response(input, { data: [row(1, input.page)], pages: 2, nextPage: input.page === 1 ? 2 : null, morePagesAvailable: input.page === 1 }) });
   const first = await h.read('synthetic-owner', args), second = await h.read('synthetic-owner', { ...args, page: 2 });
   assert.equal(first.totals.netISK, '1.00'); assert.equal(second.totals.netISK, '2.00'); assert.equal(second.coverage.entries, 1);
+});
+
+test('compact activity reports keep full-page totals and categories while showing only the latest thirty returned dates', async () => {
+  const data = Array.from({ length: 41 }, (_, index) => row(index + 1, 1, { date: new Date(now - index * 86400000).toISOString() }));
+  const h = harness({ result: { data } }), result = await reporting(h.read).readWalletActivityReport('synthetic-owner', args);
+  assert.equal(result.dailyLimit, 30); assert.equal(result.dailyTotalDays, 41); assert.equal(result.dailyOmittedDays, 11); assert.equal(result.daily.length, 30);
+  assert.equal(result.daily[0].date, '2025-12-04'); assert.equal(result.daily[29].date, '2026-01-02');
+  assert.equal(result.coverage.entries, 41); assert.equal(result.coverage.earliest, '2025-11-23T00:00:00.000Z');
+  assert.deepEqual(plain(result.totals), { incomingISK: '41.00', outgoingISK: '0.00', netISK: '41.00' });
+  assert.equal(result.categories[0].entries, 41); assert.equal(result.categories[0].totals.netISK, '41.00');
+  assert.equal(h.calls.length, 2); assert.equal(h.calls[1].input.page, 1);
+  assert.match(result.limitations.join(' '), /must not be summed as if they cover an omitted portion/);
+  assert(!JSON.stringify(result).includes('OMIT_PRIVATE')); assert(!JSON.stringify(result).includes('first_party'));
+});
+test('daily projection handles zero one thirty and thirty-one distinct dates without fabricating buckets', async () => {
+  for (const count of [0, 1, 30, 31]) {
+    const h = harness({ result: { data: Array.from({ length: count }, (_, index) => row(index + 1, 0, { date: new Date(now - index * 2 * 86400000).toISOString() })) } });
+    const result = await reporting(h.read).readWalletActivityReport('synthetic-owner', args);
+    assert.equal(result.dailyTotalDays, count); assert.equal(result.daily.length, Math.min(30, count)); assert.equal(result.dailyOmittedDays, Math.max(0, count - 30));
+    assert.equal(result.coverage.entries, count); assert(result.daily.every(bucket => bucket.entries === 1));
+    for (let index = 1; index < result.daily.length; index++) assert.equal(Date.parse(result.daily[index].date) - Date.parse(result.daily[index - 1].date), 2 * 86400000);
+  }
+});
+test('report preserves unavailable all-missing and observed-empty amount semantics', async () => {
+  const omitted = row(1); delete omitted.amount;
+  for (const [mode, options] of [['unavailable', { connections: () => [{ characterId: args.characterId, scopes: [] }] }], ['missing', { result: { data: [omitted] } }], ['empty', { result: { data: [] } }]]) {
+    const result = await reporting(harness(options).read).readWalletActivityReport('synthetic-owner', args);
+    if (mode === 'empty') assert.deepEqual(plain(result.totals), { incomingISK: '0.00', outgoingISK: '0.00', netISK: '0.00' });
+    else assert.equal(result.totals, null);
+    assert.equal(result.dailyTotalDays, mode === 'missing' ? 1 : 0); assert.equal(result.dailyOmittedDays, 0);
+    if (mode === 'unavailable') { assert.equal(result.status, 'needs_permission'); assert.equal(result.coverage.kind, 'unavailable'); }
+    if (mode === 'missing') { assert.equal(result.daily[0].totals, null); assert.equal(result.coverage.missingAmountEntries, 1); }
+  }
+});
+test('report retains corporation division page limit current corporation and source evidence', async () => {
+  const selected = { ...corporation, page: 500 }, h = harness({ result: { pages: 501, morePagesAvailable: true, pageLimitReached: true, cacheExpires: stamp } });
+  const result = await reporting(h.read).readWalletActivityReport('synthetic-owner', selected);
+  assert.equal(result.entity, 'corporation'); assert.equal(result.division, 3); assert.equal(result.corporationId, 98000001); assert.equal(result.scope, scopes[1]);
+  assert.equal(result.coverage.page, 500); assert.equal(result.coverage.pageLimitReached, true); assert.equal(result.coverage.pages, 501); assert.equal(result.coverage.nextPage, null);
+  assert.equal(result.freshness.state, 'stale'); assert.equal(result.freshness.retrievedAt, stamp); assert.equal(result.status, 'partial');
+  assert.equal(h.calls.length, 2); assert.equal(h.calls[1].input.division, 3); assert.equal(h.calls[1].input.page, 500);
+  const unknown = await reporting(harness({ result: { pages: null, morePagesAvailable: null } }).read).readWalletActivityReport('synthetic-owner', args);
+  assert.equal(unknown.coverage.kind, 'unknown'); assert.equal(unknown.coverage.pages, null); assert.equal(unknown.coverage.nextPage, null);
+});
+test('report whitelist removes extra fields at every projected level without mutating the dashboard response', async () => {
+  const source = await harness().read('synthetic-owner', args), marker = 'OMIT_EXTRA_PRIVATE_FIELD';
+  source.raw = marker; source.coverage.owner = marker; source.freshness.headers = marker; source.totals.balance = marker;
+  source.daily[0].reason = marker; source.daily[0].totals.counterparty = marker; source.categories[0].raw = marker; source.categories[0].totals.balance = marker;
+  const before = JSON.stringify(source), result = reporting(() => { throw Error('Projection does not read'); }).projectWalletActivityReport(source);
+  assert(!JSON.stringify(result).includes(marker)); assert.equal(JSON.stringify(source), before);
+  assert.deepEqual(plain(result.totals), { incomingISK: '1.00', outgoingISK: '0.00', netISK: '1.00' });
+});
+test('compact wallet output remains below64KiB for a valid2500-row page with extreme exact decimals and seven categories', async () => {
+  const refs = ['market_transaction', 'player_donation', 'bounty', 'transaction_tax', 'manufacturing', 'contract_price', 'future_reference_type'];
+  const amounts = [Number.MAX_SAFE_INTEGER, Number.MIN_VALUE, -4503599627370495, -1e-323], data = [];
+  for (let day = 0; day < 31; day++) for (const amount of amounts) data.push(row(data.length + 1, amount, { date: new Date(now - day * 86400000).toISOString(), ref_type: refs[day % refs.length] }));
+  while (data.length < 2500) data.push(row(data.length + 1, Number.MIN_VALUE, { date: new Date(now - (data.length + 31) * 86400000).toISOString(), ref_type: refs[data.length % refs.length] }));
+  const h = harness({ result: { data } }), result = await reporting(h.read).readWalletActivityReport('synthetic-owner', args);
+  assert.equal(result.coverage.entries, 2500); assert.equal(result.dailyTotalDays, 2407); assert.equal(result.dailyOmittedDays, 2377); assert.equal(result.daily.length, 30); assert.equal(result.categories.length, 7);
+  assert.equal(result.totals.incomingISK.split('.')[0], '279223176896970721');
+  assert.equal(result.daily.at(-1).totals.incomingISK, '9007199254740991.' + '0'.repeat(323) + '5');
+  assert.equal(result.daily.at(-1).totals.outgoingISK, '4503599627370495.' + '0'.repeat(322) + '1');
+  const text = JSON.stringify(result), response = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text }] } });
+  assert(Buffer.byteLength(text) < 64 * 1024); assert(Buffer.byteLength(response) < 64 * 1024);
+  assert.equal(h.calls.length, 2);
+});
+test('compact report keeps strict wallet owner division and pagination validation before data access', async () => {
+  for (const input of [null, { characterId: args.characterId }, { ...args, division: 1 }, { ...args, entity: 'corporation' }, { ...corporation, division: 8 }, { ...args, page: 501 }, { ...args, corporationId: 98000001 }, { ...args, data: [] }]) {
+    const h = harness(); await assert.rejects(reporting(h.read).readWalletActivityReport('synthetic-owner', input), error => error.status === 400); assert.equal(h.calls.length, 0);
+  }
+  const h = harness({ connections: () => [{ characterId: args.characterId + 1, scopes }] });
+  await assert.rejects(reporting(h.read).readWalletActivityReport('synthetic-owner', args), error => error.status === 404); assert.equal(h.calls.length, 1);
+});
+test('compact wallet reader forwards owner selection and signal once and discards late cancelled data', async () => {
+  const source = await harness().read('synthetic-owner', args), controller = new AbortController(); let calls = 0;
+  const report = reporting(async (user, selected, options) => { calls++; assert.equal(user, 'synthetic-owner'); assert.equal(selected, args); assert.equal(options.signal, controller.signal); return source; });
+  await report.readWalletActivityReport('synthetic-owner', args, { signal: controller.signal }); assert.equal(calls, 1);
+  const cancelled = reporting(async () => { controller.abort(); return source; });
+  await assert.rejects(cancelled.readWalletActivityReport('synthetic-owner', args, { signal: controller.signal }));
 });
