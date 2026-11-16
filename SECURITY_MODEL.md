@@ -112,6 +112,12 @@ dates never establish a zero or paused queue. Browser validation reconstructs
 counts and daily groups from validated entries and binds the schedule clock to
 the selected report. Chart/table filters are local and reset with the result.
 No new permission, retained data or background work is introduced.
+The browser skill explorer uses the already validated, at-most-2,000-row skill
+response. Local text, exact-group and level filters render 100 rows per page;
+full-response charts show at most twenty groups and six levels. Every returned
+group remains selectable, including unmapped groups. Chart selections replace
+table filters without changing summary evidence or fetching additional data.
+The explorer is cleared on refresh, character change, cancellation and unmount.
 The wallet_activity_report tool validates an owned character, wallet entity, explicit
 corporation division when applicable and a page from 1 to 500. It reuses the
 on-demand wallet reader and current corporation membership checks; no caller
