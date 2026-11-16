@@ -8,6 +8,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `character_clone_report` | Separate active-implant and stored-clone evidence, full received counts and bounded previews without clone names or locations |
+| `character_contacts_report` | Selected contact-page count partitions and anonymous label-presence groups, omitting contact identities and private label names |
 | `character_mail_report` | Separate mailbox unread counters and bounded header read/date/label counts, without subjects, private label names or correspondents |
 | `character_fittings_report` | Saved-plan and item-presence counts with bounded public type groups, omitting private fitting names and identities |
 | `character_freelance_report` | One character’s returned freelance participation list, bounded job previews and optional explicitly selected own participation |
@@ -44,7 +45,19 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 ## Workspace navigation
 
-The nineteen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+The twenty workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+
+## Contacts
+
+**Character → Contacts** reads one selected contact page when you click Load, using the existing `esi-characters.read_contacts.v1` grant. Optional label metadata is off by default. Select **Request label metadata on the next load** before a manual load to add that independent read; changing the checkbox alone makes no request. Page and refresh controls replace the result without accumulating earlier pages or loading further pages automatically.
+
+Charts show counts by contact type, standing sign, blocked status and watched setting for the returned page. Exact contact rows retain the received numeric standing without clipping or calculating an average. These are player-set contact settings, not NPC reputation or effective standings. They do not establish friendliness, travel safety, docking rights or whether anyone is online. Local filters and 100-row table pages keep all accepted contacts reachable without another EVE request; chart totals continue to describe the full received page.
+
+An omitted blocked flag stays **Unknown**. Under [CCP's optional-boolean contract](https://developers.eveonline.com/blog/esi-and-optional-booleans), omitted watched is false; neither setting implies activity. Missing label assignments differ from an explicitly empty assignment list. Known labels overlap, so their presence counts must not be added into a distinct-contact total. Label charts show the top twenty groups with explicit omissions; the tables retain the remaining accepted groups. Optional private label names are plain text, screened before truncation, with unsafe text explicitly redacted. Without metadata, label IDs remain available in the private view without guessed names.
+
+Missing pagination metadata does not permit guessing a next page. Even a short or empty page does not prove a complete contact list or deletion. The application accepts at most 1,000 contacts per page and pages 1–500; these are application limits, not provider completeness guarantees. Separate contact and label responses have independent cache evidence. A metadata failure leaves accepted contacts visibly partial; authorization changes or cancellation discard the result.
+
+The compact `character_contacts_report` accepts an owned `characterId`, optional `page`, and optional boolean `includeLabels`. It returns the selected page's count summaries, source coverage and freshness, plus up to twenty anonymous overlapping label-presence groups with omission counts. Response-local ranks are not stable label identities. Contact IDs, individual standing values, label IDs and private label names are omitted. Optional metadata adds only independent record and name-quality counts. No contact is created, edited, blocked, watched, notified or removed; no new permission, background collection or retained contact history is enabled. [CCP's dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-11-16) defines the returned fields.
 
 ## Mail activity
 
