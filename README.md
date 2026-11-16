@@ -8,6 +8,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `character_clone_report` | Separate active-implant and stored-clone evidence, full received counts and bounded previews without clone names or locations |
+| `character_notifications_report` | Aggregate notification read/unread, date and type counts, omitting text, senders and message identities |
 | `character_contacts_report` | Selected contact-page count partitions and anonymous label-presence groups, omitting contact identities and private label names |
 | `character_mail_report` | Separate mailbox unread counters and bounded header read/date/label counts, without subjects, private label names or correspondents |
 | `character_fittings_report` | Saved-plan and item-presence counts with bounded public type groups, omitting private fitting names and identities |
@@ -45,7 +46,19 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 ## Workspace navigation
 
-The twenty workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+The twenty-one workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+
+## Notifications
+
+**Character → Notifications** manually reads the selected character's notifications using the existing `esi-characters.read_notifications.v1` grant. Opening the workspace, choosing a character or changing local filters makes no request. Load or Refresh replaces the result; no earlier responses are accumulated or stored.
+
+The dashboard shows read/unread counts, the observed UTC date range, and counts by the reviewed public notification type. Its daily chart shows the latest thirty reported dates with actual date spacing and paired read/unread bars. Its type chart shows the twenty largest groups. Explicit omission counts, local selectors and exact tables keep all accepted dates and types accessible. The grouped table uses date, type and read-state intersections, with 100 group rows per page and a separate matching-notification total. Chart selections clear contradictory filters so the selected count remains exact.
+
+These counts describe one returned response. ESI does not provide pagination or a completeness guarantee for this endpoint; the app does not invent a cursor, retention interval or full history. Read and unread follow the API flag, including the documented false default when `is_read` is omitted. They do not establish attention, urgency or delivery. A notification type is a reported category, not evidence of current war, structure, job, payment or safety status. Future reported dates remain dates, not scheduled work or predictions.
+
+Notification text, sender details, IDs and individual timestamps are discarded after bounded parsing and never appear in this dashboard or its chat report. Only UTC dates and reviewed public type tokens are used for the charts. Recognized token spelling is preserved exactly; safe future tokens become an **Unrecognized type** bucket and make the evidence visibly partial without exposing their raw text. That bucket may combine multiple unknown types. Stale or uncertain cache evidence remains explicit.
+
+The application accepts at most 1,000 notifications in one response and refuses malformed or larger responses without truncating the count. An accepted empty response means zero records returned by that read; unavailable evidence remains unknown. The compact `character_notifications_report` accepts only an owned `characterId` and returns full count summaries, coverage and freshness, the latest thirty daily groups and the twenty largest type groups with omissions. It excludes grouped cells and individual messages. No mark-read action, game write, new grant, background polling or retained notification history is added. Field behavior follows [CCP's dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-11-16) and [optional boolean contract](https://developers.eveonline.com/blog/esi-and-optional-booleans).
 
 ## Contacts
 
