@@ -29,15 +29,15 @@ export default function CharacterPanel({ characters, openConnections, mode = 're
   const [current, setCurrent] = useState<CharacterWorkspaceRequest | null>(null);
   const [trail, setTrail] = useState<CharacterWorkspaceRequest[]>([]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [signedOut, setSignedOut] = useState(false);
-  const active = useRef<AbortController | null>(null);
+  const [generation, setGeneration] = useState(0); const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
   function clear() {
-    active.current?.abort(); active.current = null;
+    setGeneration(value => value + 1); active.current?.abort(); active.current = null;
     setResult(null); setCurrent(null); setTrail([]); setBusy(false); setError(''); setSignedOut(false);
   }
   async function load(args: CharacterWorkspaceRequest, history: CharacterWorkspaceRequest[] = []) {
     if (!(modeViews[mode] as readonly string[]).includes(args.view)) { clear(); return; }
-    active.current?.abort();
+    setGeneration(value => value + 1); active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     setResult(null); setCurrent(args); setTrail(history); setBusy(true); setError(''); setSignedOut(false);
     try {
@@ -68,7 +68,7 @@ export default function CharacterPanel({ characters, openConnections, mode = 're
       <p className="overview-message">{result.message}</p>
       {result.labels && <p className="overview-hint" role="status">Public names: {result.labels.status === 'ready' ? 'available' : result.labels.status === 'partial' ? 'limited coverage' : 'unavailable'}. {result.labels.message}</p>}
       {result.status === 'needs_permission' && <button className="small" onClick={openConnections}>Review access</button>}
-      {result.view === 'mining' && <MiningChart key={result.generatedAt} result={result}/>}
+      {result.view === 'mining' && <MiningChart key={generation + ":" + result.generatedAt} result={result}/>}
       {mode === 'reputation' && <ReputationCharts key={result.generatedAt} result={result}/>}
       {result.rows.length > 0 && <div className="workspace-table-scroll" tabIndex={0} role="region" aria-label={titles[result.view]}><table className="workspace-table">
         <caption>{titles[result.view]} · {result.rows.length} displayed</caption>
@@ -78,7 +78,7 @@ export default function CharacterPanel({ characters, openConnections, mode = 're
           return <td key={column.key}>{formatCharacterValue(row.cells[column.key], column)}{name && <><br/><small>{name}</small></>}</td>;
         })}</tr>)}</tbody>
       </table></div>}
-      {mode === 'industry' && result.view === 'planets' && (result.status === 'ready' || result.status === 'partial') && result.rows.length > 0 && <PlanetaryPanel key={`${result.characterId}:${result.generatedAt}`} characterId={result.characterId} planets={result.rows.map(row => ({ planetId: row.cells.planet, solarSystemId: row.cells.system, planetType: row.cells.type })) as PlanetaryChoice[]}/>}
+      {mode === 'industry' && result.view === 'planets' && (result.status === 'ready' || result.status === 'partial') && result.rows.length > 0 && <PlanetaryPanel key={`${generation}:${result.characterId}:${result.generatedAt}`} characterId={result.characterId} planets={result.rows.map(row => ({ planetId: row.cells.planet, solarSystemId: row.cells.system, planetType: row.cells.type })) as PlanetaryChoice[]}/>}
       {result.next && <button className="button secondary workspace-next" onClick={() => void load(result.next!, current ? [...trail, current] : trail)}>Load next batch →</button>}
       <details className="overview-freshness"><summary>Coverage &amp; freshness</summary><p>Coverage: {result.coverage}. Batches are fetched separately and can change between requests. A recent fetch can still contain cached EVE data.</p>{result.retrievedAt && <p>Fetched: {time(result.retrievedAt)}</p>}{result.cacheExpires && <p>ESI cache expiry: {time(result.cacheExpires)}</p>}{result.labels?.retrievedAt && <p>Public names fetched: {time(result.labels.retrievedAt)}</p>}{result.labels?.cacheExpires && <p>Public names cache expiry: {time(result.labels.cacheExpires)}</p>}<p>Required read permission: <code>{result.scope}</code></p></details>
     </article>}

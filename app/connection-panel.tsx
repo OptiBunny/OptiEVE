@@ -25,10 +25,11 @@ export default function ConnectionPanel(){
  const [statusLoading,setStatusLoading]=useState(true),[statusError,setStatusError]=useState(''),[signedOut,setSignedOut]=useState(false);
  const [tab,setTab]=useState<WorkspaceDestination>('overview');
  const [handoff,setHandoff]=useState<OverviewHandoff|null>(null);
+ const [,setNavigationRevision]=useState(0);
  const navigationEpoch=useRef(0),handoffRef=useRef<OverviewHandoff|null>(null);
  const navigationState=useRef<{status:ConnectionStatus|null;ready:boolean;tab:WorkspaceDestination}>({status:null,ready:false,tab:'overview'});
  navigationState.current={status,ready:!!status?.configured&&!statusLoading&&!statusError&&!signedOut&&!busy,tab};
- function selectTab(next:WorkspaceDestination){navigationEpoch.current++;handoffRef.current=null;setHandoff(null);setTab(next);}
+ function selectTab(next:WorkspaceDestination){if(navigationState.current.tab===next&&!handoffRef.current)return;navigationEpoch.current++;setNavigationRevision(value=>value+1);navigationState.current.tab=next;handoffRef.current=null;setHandoff(null);setTab(next);}
  const [corporationFeatures,setCorporationFeatures]=useState<string[]>([]);
  const [accessPreset,setAccessPreset]=useState<'character'|'all'|'custom'>('character');
  const [reconnectReview,setReconnectReview]=useState<ReconnectReview|null>(null);
