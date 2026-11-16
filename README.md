@@ -8,6 +8,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `character_clone_report` | Separate active-implant and stored-clone evidence, full received counts and bounded previews without clone names or locations |
+| `character_mail_report` | Separate mailbox unread counters and bounded header read/date/label counts, without subjects, private label names or correspondents |
 | `character_fittings_report` | Saved-plan and item-presence counts with bounded public type groups, omitting private fitting names and identities |
 | `character_freelance_report` | One character’s returned freelance participation list, bounded job previews and optional explicitly selected own participation |
 | `character_calendar_report` | One calendar-summary batch with response and date-window counts, a bounded UTC schedule and explicit continuation evidence |
@@ -43,7 +44,19 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 ## Workspace navigation
 
-The eighteen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+The nineteen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+
+## Mail activity
+
+**Character → Mail headers** loads the selected character’s mailbox label counters and one batch of up to fifty headers when requested. It uses the existing `esi-mail.read_mail.v1` grant. Optional positive mail and label IDs select an older batch or an OR-label query; filters never add read permissions. **Load older headers** replaces the displayed batch and requires an explicit click. **Refresh latest headers** keeps the loaded OR-label query and resets its cursor; **Load latest with all labels** explicitly clears the query. Missing message IDs disable continuation. A short or empty batch does not establish complete mailbox history or prove that mail was deleted.
+
+Read/unread charts and sparse UTC date charts describe only the returned header batch. The mailbox unread total and each mailbox-label unread counter are separate observations from a separate response. Labels overlap, so neither their unread counters nor their header-presence counts can be summed into a distinct-message total. Independent ESI caches may disagree without either response being malformed. Charts show at most thirty returned dates and twenty ranked label groups, with omissions stated; local filters and paged tables expose the accepted rows without more requests. No dates or zero-count gaps are invented.
+
+Under [CCP’s optional-boolean contract](https://developers.eveonline.com/blog/esi-and-optional-booleans), an omitted `is_read` field means false. Other missing optional fields remain unknown: absent label arrays differ from explicit empty arrays, and absent unread counters differ from zero. Known header labels must match the selected OR-label query. Missing assignments remain partial evidence, and a header label absent from the separate label metadata is not assumed deleted.
+
+Subjects are hidden by default and can be revealed locally. Hiding subjects is a display choice: bounded subject text is already in the accepted dashboard response. Subjects and private label names are plain untrusted text, screened before truncation; unsafe text is explicitly redacted. Bodies, sender/recipient identities and persistent message IDs are omitted, except the selected and next cursors needed for manual pagination. Changing the character or workspace, or loading a different query, clears displayed evidence and cancels pending reads. Nothing is stored in browser history or a new account-data store.
+
+The compact `character_mail_report` accepts one owned `characterId`, an optional `beforeId`, and an optional list of one to twenty-five unique positive label IDs. It returns separate mailbox/header summaries, up to twenty mailbox-label counters, twenty header-label groups and thirty returned dates, with known and unknown omission counts. It omits subjects, private label names, individual message rows, bodies and correspondents. No message is sent, marked read, moved or deleted; no label is changed. These reads do not enable collection, retain mailbox history, expand grants or perform automatic continuation. [CCP’s dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31) defines the source fields.
 
 ## Saved fittings
 
