@@ -141,3 +141,105 @@ test('server errors clear prior history and preserve the sign-in recovery link',
   button(h.render(), 'Load saved history').props.onClick(); await settle(); button(h.render(), 'Reload saved history').props.onClick(); await settle();
   assert(!find(h.render(), node => node.type === h.results)); assert(find(h.render(), node => node.type === 'a' && node.props.href === '/signin-with-chatgpt?return_to=%2F'));
 });
+
+function comparedFixture() {
+  const result = fixture(); result.report.days = 7;
+  result.comparison = {
+    current: { startsAt: '2025-12-26T00:00:00.000Z', endsAt: stamp, retentionClipped: false },
+    previous: { startsAt: '2025-12-19T00:00:00.000Z', endsBefore: '2025-12-26T00:00:00.000Z', retentionClipped: false, entries: 2, amountEntries: 2, missingAmountEntries: 0, earliest: '2025-12-20T12:00:00.000Z', latest: '2025-12-25T12:00:00.000Z', totals: { incomingISK: '25.10', outgoingISK: '2.30', netISK: '22.80' } },
+    observedDelta: { incomingISK: '-14.80', outgoingISK: '-2.20', netISK: '-12.60' },
+  };
+  return result;
+}
+
+test('comparison chart preserves exact period totals, signed differences and nonoverlapping boundaries', () => {
+  const html = render(comparedFixture());
+  assert.match(html, /Compare saved periods/);
+  assert.match(html, /<th scope="row">Previous 7 days<\/th><td>25.10<\/td><td>2.30<\/td><td>22.80<\/td><td>2 \/ 0<\/td>/);
+  assert.match(html, /<th scope="row">Current 7 days<\/th><td>10.30<\/td><td>0.10<\/td><td>10.20<\/td><td>2 \/ 0<\/td>/);
+  assert.match(html, /Incoming difference \(ISK\)<\/dt><dd>-14.80<\/dd>/);
+  assert.match(html, /Outgoing difference \(ISK\)<\/dt><dd>-2.20<\/dd>/);
+  assert.match(html, /Net cash-flow difference \(ISK\)<\/dt><dd>-12.60<\/dd>/);
+  assert.match(html, /From 2025-12-19 00:00:00 UTC \(inclusive\)/);
+  assert.match(html, /Before 2025-12-26 00:00:00 UTC \(exclusive\)/);
+  assert.match(html, /Through 2026-01-02 00:00:00 UTC \(inclusive\)/);
+  assert.match(html, /First saved entry: 2025-12-20 12:00:00 UTC/);
+  assert.match(html, /neither window is proven complete/);
+  assert.match(html, /Unequal capture coverage can explain a change/);
+  assert.doesNotMatch(html, /NaN|Infinity|undefined/);
+});
+
+test('comparison unknown states preserve retained values and explain missing evidence', () => {
+  const clipped = comparedFixture(); clipped.comparison.previous.retentionClipped = true; clipped.comparison.observedDelta = null;
+  const clippedHtml = render(clipped);
+  assert.match(clippedHtml, /Retention excludes part of the previous window/);
+  assert.match(clippedHtml, /Observed difference is unknown/);
+  assert.match(clippedHtml, /<th scope="row">Previous 7 days<\/th><td>25.10/);
+  assert.doesNotMatch(clippedHtml, /Net cash-flow difference \(ISK\)/);
+  const missing = comparedFixture(); missing.comparison.previous.amountEntries = 1; missing.comparison.previous.missingAmountEntries = 1; missing.comparison.observedDelta = null;
+  const missingHtml = render(missing);
+  assert.match(missingHtml, /Some saved entries have no amount/); assert.match(missingHtml, /1 rows without amounts/);
+  assert.doesNotMatch(missingHtml, /Net cash-flow difference \(ISK\)/);
+  const absent = comparedFixture(); Object.assign(absent.comparison.previous, { entries: 0, amountEntries: 0, missingAmountEntries: 0, earliest: null, latest: null, totals: null }); absent.comparison.observedDelta = null;
+  const absentHtml = render(absent);
+  assert.match(absentHtml, /One or both windows have no saved amounts/);
+  assert.match(absentHtml, /<th scope="row">Previous 7 days<\/th><td>Unknown<\/td><td>Unknown<\/td><td>Unknown<\/td><td>0 \/ 0<\/td>/);
+});
+
+test('known zero difference stays numeric while ordinary reports omit comparison', () => {
+  const same = comparedFixture(); same.comparison.previous.totals = plain(same.report.totals); same.comparison.observedDelta = { incomingISK: '0.00', outgoingISK: '0.00', netISK: '0.00' };
+  const html = render(same);
+  assert.match(html, /Net cash-flow difference \(ISK\)<\/dt><dd>0.00<\/dd>/);
+  assert.doesNotMatch(html, /Observed difference is unknown/);
+  assert.doesNotMatch(render(fixture()), /Compare saved periods|Saved cash flow by period|Observed difference/);
+});
+
+test('seven-day reports and opt-in comparisons load only on explicit request without seven-day retention', async () => {
+  const calls = []; const h = interactions(async args => { calls.push(plain(args)); return comparedFixture(); });
+  const initial = h.render();
+  assert.equal(find(initial, node => node.props?.id === 'wallet-history-compare').props.checked, false);
+  const periods = find(initial, node => node.props?.id === 'wallet-history-period');
+  assert.deepEqual(nodes(periods).filter(node => node.type === 'option').map(node => node.props.value), [7, 30, 90, 365]);
+  periods.props.onChange({ target: { value: '7' } });
+  find(h.render(), node => node.props?.id === 'wallet-history-compare').props.onChange({ target: { checked: true } });
+  assert.equal(calls.length, 0);
+  button(h.render(), 'Load saved history').props.onClick(); await settle();
+  assert.deepEqual(calls, [{ characterId, operation: 'report', days: 7, comparePrevious: true }]);
+  const retention = find(h.render(), node => node.props?.id === 'wallet-history-retention');
+  assert.deepEqual(nodes(retention).filter(node => node.type === 'option').map(node => node.props.value), [30, 90, 365]);
+  assert.equal(find(h.render(), node => node.props?.id === 'wallet-history-period').props.value, 7);
+  assert.equal(find(h.render(), node => node.type === h.results).props.result.comparison.previous.entries, 2);
+});
+
+test('changing comparison selection clears saved results and cancels a late comparison without another read', async () => {
+  const calls = []; const h = interactions((args, signal) => new Promise(resolve => calls.push({ args, signal, resolve })));
+  button(h.render(), 'Load saved history').props.onClick(); calls[0].resolve(fixture()); await settle();
+  find(h.render(), node => node.props?.id === 'wallet-history-compare').props.onChange({ target: { checked: true } });
+  assert(!find(h.render(), node => node.type === h.results)); assert.equal(calls.length, 1); assert.equal(calls[0].signal.aborted, true);
+  button(h.render(), 'Load saved history').props.onClick(); assert.equal(calls[1].args.comparePrevious, true);
+  find(h.render(), node => node.props?.id === 'wallet-history-compare').props.onChange({ target: { checked: false } });
+  assert.equal(calls[1].signal.aborted, true); calls[1].resolve(comparedFixture()); await settle();
+  assert(!find(h.render(), node => node.type === h.results)); assert.equal(calls.length, 2);
+  button(h.render(), 'Load saved history').props.onClick(); assert.equal(Object.hasOwn(calls[2].args, 'comparePrevious'), false); h.cleanup();
+});
+
+test('refresh, character and period changes remove compared data before a later response can arrive', async () => {
+  const calls = []; const h = interactions((args, signal) => new Promise(resolve => calls.push({ args, signal, resolve })));
+  find(h.render(), node => node.props?.id === 'wallet-history-compare').props.onChange({ target: { checked: true } });
+  button(h.render(), 'Load saved history').props.onClick(); calls[0].resolve(comparedFixture()); await settle();
+  button(h.render(), 'Reload saved history').props.onClick(); assert(!find(h.render(), node => node.type === h.results));
+  find(h.render(), node => node.props?.id === 'wallet-history-character').props.onChange({ target: { value: String(characterId + 1) } });
+  assert.equal(calls[1].signal.aborted, true); calls[1].resolve(comparedFixture()); await settle(); assert(!find(h.render(), node => node.type === h.results));
+  button(h.render(), 'Load saved history').props.onClick(); assert.equal(calls[2].args.characterId, characterId + 1); assert.equal(calls[2].args.comparePrevious, true);
+  find(h.render(), node => node.props?.id === 'wallet-history-period').props.onChange({ target: { value: '90' } });
+  assert.equal(calls[2].signal.aborted, true); calls[2].resolve(comparedFixture()); await settle(); assert(!find(h.render(), node => node.type === h.results));
+  h.cleanup();
+});
+
+test('comparison selection cannot turn a scope-loss status read into a financial report', async () => {
+  const calls = []; const h = interactions(async args => { calls.push(plain(args)); return empty(); }, []);
+  assert.equal(find(h.render(), node => node.props?.id === 'wallet-history-compare').props.disabled, true);
+  button(h.render(), 'Load saved history').props.onClick(); await settle();
+  assert.deepEqual(calls, [{ characterId, operation: 'status' }]);
+  assert.equal(find(h.render(), node => node.type === h.results).props.result.comparison, undefined);
+});

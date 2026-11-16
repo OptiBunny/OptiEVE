@@ -122,3 +122,35 @@ test('rolling year with permitted midnight clock skew can cover 367 UTC dates', 
   const tooFar = plain(year); tooFar.report.latest = '2026-03-16T00:00:31.000Z';
   assert.throws(() => client.walletHistoryResponse(tooFar, { characterId, operation: 'report', days: 365 }), /incomplete response/);
 });
+
+
+test('real service and client agree on adjacent seven-day observed cashflow without another capture', async () => {
+  const data = [event(1, 0.1, 1), event(2, 0.2, 7), event(3, -0.3, 8), event(4, 4, 14), event(5, 100, 14.00001)];
+  const h = harness(async args => page(args, { data }));
+  await h.action({ operation: 'configure', enabled: true, retentionDays: 30 }); await h.action({ operation: 'capture' });
+  const result = await h.action({ operation: 'report', days: 7, comparePrevious: true });
+  assert.equal(result.report.entries, 2); assert.equal(result.report.totals.netISK, '0.30');
+  assert.equal(result.comparison.previous.entries, 2); assert.equal(result.comparison.previous.totals.netISK, '3.70');
+  assert.deepEqual(plain(result.comparison.observedDelta), { incomingISK: '-3.70', outgoingISK: '-0.30', netISK: '-3.40' });
+  assert.equal(result.comparison.current.startsAt, '2026-03-08T12:00:00.000Z');
+  assert.equal(result.comparison.previous.startsAt, '2026-03-01T12:00:00.000Z');
+  assert.equal(result.comparison.previous.endsBefore, result.comparison.current.startsAt);
+  await h.action({ operation: 'configure', enabled: false });
+  assert.equal((await h.action({ operation: 'report', days: 7, comparePrevious: true })).comparison.observedDelta.netISK, '-3.40');
+  assert.equal(h.calls.length, 1);
+  h.revokeScope(); await assert.rejects(h.action({ operation: 'report', days: 7, comparePrevious: true }), error => error.status === 403);
+  assert.equal((await h.action({ operation: 'status' })).comparison, undefined);
+});
+
+test('real comparison keeps retention limits and missing amounts visible to browser validation', async () => {
+  for (const missing of [false, true]) {
+    const h = harness(async args => page(args, { data: [event(1, 2, 1), event(2, missing ? undefined : 4, 10)] }));
+    await h.action({ operation: 'configure', enabled: true, retentionDays: 30 }); await h.action({ operation: 'capture' });
+    const week = await h.action({ operation: 'report', days: 7, comparePrevious: true });
+    assert.equal(week.comparison.previous.missingAmountEntries, missing ? 1 : 0);
+    assert.equal(week.comparison.observedDelta?.netISK ?? null, missing ? null : '-2.00');
+    const month = await h.action({ operation: 'report', days: 30, comparePrevious: true });
+    assert.equal(month.comparison.previous.retentionClipped, true); assert.equal(month.comparison.previous.totals, null); assert.equal(month.comparison.observedDelta, null);
+    assert.equal((await h.action({ operation: 'report', days: 7 })).comparison, undefined); assert.equal(h.calls.length, 1);
+  }
+});

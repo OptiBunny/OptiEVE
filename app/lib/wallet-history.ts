@@ -5,13 +5,14 @@ import {
   walletActivityDate, walletActivityExpiry, walletActivityPrecisionPolicy,
 } from './wallet-analytics';
 import { walletHistoryStorage, WALLET_HISTORY_SCOPE, type WalletHistoryStorage, type WalletHistoryOwner } from './wallet-history-storage';
-import type { WalletActivityCategoryId } from './wallet-analytics-types';
-import type { WalletHistoryArgs, WalletHistoryCapture, WalletHistoryDays, WalletHistoryView } from './wallet-history-types';
+import type { WalletActivityCategoryId, WalletActivityTotals } from './wallet-analytics-types';
+import type { WalletHistoryArgs, WalletHistoryCapture, WalletHistoryDays, WalletHistoryReportDays, WalletHistoryView } from './wallet-history-types';
 
 const MAX_EVENTS = 10000, MAX_PAGES = 4, DAY = 86400000;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown, min = 1, max = Number.MAX_SAFE_INTEGER): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max;
 const days = (value: unknown): value is WalletHistoryDays => value === 30 || value === 90 || value === 365;
+const reportDays = (value: unknown): value is WalletHistoryReportDays => value === 7 || days(value);
 const ownKeys = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).every(key => keys.includes(key));
 type Event = { id: number; date: string; amount: string | null; category: WalletActivityCategoryId };
 type Payload = { version: 1; events: Event[]; lastCapture: WalletHistoryCapture | null };
@@ -34,7 +35,7 @@ export function validateWalletHistoryArgs(value: unknown): WalletHistoryArgs {
   switch (value.operation) {
     case 'status': case 'capture': if (ownKeys(value, common)) return value as WalletHistoryArgs; break;
     case 'configure': if (ownKeys(value, [...common, 'enabled', 'retentionDays']) && typeof value.enabled === 'boolean' && (days(value.retentionDays) || value.enabled === false && !Object.hasOwn(value, 'retentionDays'))) return value as WalletHistoryArgs; break;
-    case 'report': if (ownKeys(value, [...common, 'days']) && (!Object.hasOwn(value, 'days') || days(value.days))) return value as WalletHistoryArgs; break;
+    case 'report': if (ownKeys(value, [...common, 'days', 'comparePrevious']) && (!Object.hasOwn(value, 'days') || reportDays(value.days)) && (!Object.hasOwn(value, 'comparePrevious') || typeof value.comparePrevious === 'boolean')) return value as WalletHistoryArgs; break;
     case 'clear': if (ownKeys(value, [...common, 'confirm']) && value.confirm === 'delete_wallet_history') return value as WalletHistoryArgs; break;
   }
   throw new EveError('Supply only the accepted options for this history operation. Erasure requires delete_wallet_history confirmation.');
@@ -76,9 +77,19 @@ function retained(payload: Payload, retentionDays: WalletHistoryDays, at: number
   const cutoff = at - retentionDays * DAY;
   return { ...payload, events: payload.events.filter(event => Date.parse(event.date) >= cutoff && Date.parse(event.date) <= at + 60000), lastCapture: payload.lastCapture && Date.parse(payload.lastCapture.at) >= cutoff ? payload.lastCapture : null };
 }
-function view(characterId: number, owner: WalletHistoryOwner, payload: Payload, range: WalletHistoryDays, at: number, message: string): WalletHistoryView {
+function observedDifference(current: WalletActivityTotals, previous: WalletActivityTotals): { incomingISK: string; outgoingISK: string; netISK: string } {
+  const difference = (key: keyof WalletActivityTotals) => {
+    const left = storedAmount(current[key]), right = storedAmount(previous[key]), scale = Math.max(left.scale, right.scale);
+    return walletActivityFormat({ units: left.units * 10n ** BigInt(scale - left.scale) - right.units * 10n ** BigInt(scale - right.scale), scale });
+  };
+  return { incomingISK: difference('incomingISK'), outgoingISK: difference('outgoingISK'), netISK: difference('netISK') };
+}
+function view(characterId: number, owner: WalletHistoryOwner, payload: Payload, range: WalletHistoryReportDays, at: number, message: string, comparePrevious = false): WalletHistoryView {
   const settings = { enabled: owner.record?.enabled ?? false, retentionDays: owner.record?.retentionDays ?? 90 };
-  const events = retained(payload, Math.min(range, settings.retentionDays) as WalletHistoryDays, at).events;
+  const saved = retained(payload, settings.retentionDays, at), currentStart = at - range * DAY;
+  // Only explicitly requested comparisons use exact adjacent intervals. Preserve
+  // legacy report behavior for provider timestamps within its 60-second tolerance.
+  const events = saved.events.filter(event => Date.parse(event.date) >= currentStart && (!comparePrevious || Date.parse(event.date) <= at));
   const total = walletActivityBucket(), daily = new Map<string, ReturnType<typeof walletActivityBucket>>(), categories = new Map<WalletActivityCategoryId, ReturnType<typeof walletActivityBucket>>();
   let earliest: string | null = null, latest: string | null = null;
   for (const event of events) {
@@ -90,13 +101,33 @@ function view(characterId: number, owner: WalletHistoryOwner, payload: Payload, 
     latest = latest === null || event.date.localeCompare(latest) > 0 ? event.date : latest;
   }
   const summary = walletActivityProject(total);
+  let comparison: WalletHistoryView['comparison'];
+  if (comparePrevious) {
+    const previousStart = currentStart - range * DAY, retentionStart = at - settings.retentionDays * DAY, prior = walletActivityBucket();
+    let previousEarliest: string | null = null, previousLatest: string | null = null;
+    for (const event of saved.events) {
+      const date = Date.parse(event.date);
+      if (date < previousStart || date >= currentStart) continue;
+      accumulateWalletActivity(prior, event.amount === null ? null : storedAmount(event.amount));
+      previousEarliest = previousEarliest === null || event.date.localeCompare(previousEarliest) < 0 ? event.date : previousEarliest;
+      previousLatest = previousLatest === null || event.date.localeCompare(previousLatest) > 0 ? event.date : previousLatest;
+    }
+    const previousSummary = walletActivityProject(prior), previousTotals = prior.entries ? previousSummary.totals : null;
+    const currentClipped = currentStart < retentionStart, previousClipped = previousStart < retentionStart;
+    comparison = {
+      current: { startsAt: new Date(currentStart).toISOString(), endsAt: new Date(at).toISOString(), retentionClipped: currentClipped },
+      previous: { startsAt: new Date(previousStart).toISOString(), endsBefore: new Date(currentStart).toISOString(), retentionClipped: previousClipped, ...previousSummary, totals: previousTotals, earliest: previousEarliest, latest: previousLatest },
+      observedDelta: events.length && summary.totals && previousTotals && !summary.missingAmountEntries && !previousSummary.missingAmountEntries && !currentClipped && !previousClipped ? observedDifference(summary.totals, previousTotals) : null,
+    };
+  }
   return {
     characterId, generatedAt: new Date(at).toISOString(), status: !settings.enabled ? 'disabled' : events.length ? 'partial' : 'empty', message, settings,
     report: { days: range, ...summary, totals: events.length ? summary.totals : null, earliest, latest,
       daily: [...daily].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, ...walletActivityProject(value) })),
       categories: [...categories].sort(([a], [b]) => a.localeCompare(b)).map(([id, value]) => ({ id, label: walletActivityCategoryLabels[id], ...walletActivityProject(value) })),
     },
-    lastCapture: retained(payload, settings.retentionDays, at).lastCapture, limits: { maxPages: MAX_PAGES, maxEvents: MAX_EVENTS }, precisionPolicy: walletActivityPrecisionPolicy, limitations: [...limitations],
+    ...(comparison ? { comparison } : {}),
+    lastCapture: saved.lastCapture, limits: { maxPages: MAX_PAGES, maxEvents: MAX_EVENTS }, precisionPolicy: walletActivityPrecisionPolicy, limitations: [...limitations],
   };
 }
 
@@ -166,7 +197,7 @@ export function createWalletHistoryService(deps: Dependencies) {
     if (args.operation === 'status' || args.operation === 'report') {
       const current = await cancellable(() => deps.storage.load(user, args.characterId), signal);
       if (!current || current.epoch !== owner.epoch || current.record?.generation !== owner.record?.generation || current.scopes.includes(WALLET_HISTORY_SCOPE) !== granted) throw changed();
-      return view(args.characterId, owner, payload, args.operation === 'report' ? args.days ?? 30 : 30, now(), granted ? 'Observed character-wallet cash flow only; gaps and older uncaptured activity remain unknown.' : 'Wallet read permission is missing. Stored history is hidden; you can pause or erase it.');
+      return view(args.characterId, owner, payload, args.operation === 'report' ? args.days ?? 30 : 30, now(), granted ? 'Observed character-wallet cash flow only; gaps and older uncaptured activity remain unknown.' : 'Wallet read permission is missing. Stored history is hidden; you can pause or erase it.', args.operation === 'report' && args.comparePrevious === true);
     }
     let enabled = owner.record?.enabled ?? false, retentionDays = owner.record?.retentionDays ?? 90;
     let message: string;

@@ -205,3 +205,155 @@ test('strict operation arguments and ownership are enforced before upstream read
   await assert.rejects(h.raw('', { characterId, operation: 'status' }), error => error.status === 401);
   assert(!h.calls.some(call => call[0] === 'journal'));
 });
+
+
+const datedRow = (id, amount, ageDays, milliseconds = 0) => row(id, amount, { date: new Date(base - ageDays * 86400000 + milliseconds).toISOString() });
+
+test('seven-day reports are independent of retention and comparison is explicitly requested', async () => {
+  const h = harness({ result: { data: [datedRow(1, 4, 1), datedRow(2, 9, 8)] } });
+  await h.enable(30); const captured = await h.run({ operation: 'capture' });
+  assert(!Object.hasOwn(captured, 'comparison'));
+  for (const extra of [{}, { comparePrevious: false }]) {
+    const report = await h.run({ operation: 'report', days: 7, ...extra });
+    assert.equal(report.report.days, 7); assert.equal(report.report.entries, 1); assert.equal(report.report.totals.netISK, '4.00');
+    assert(!Object.hasOwn(report, 'comparison'));
+  }
+  assert(!Object.hasOwn(await h.run({ operation: 'status' }), 'comparison'));
+  for (const enabled of [true, false]) await assert.rejects(h.run({ operation: 'configure', enabled, retentionDays: 7 }), error => error.status === 400);
+});
+
+test('comparison uses exact signed decimal differences and performs no collection or storage mutation', async () => {
+  const h = harness({ result: { data: [datedRow(1, 0.1, 1), datedRow(2, 0.2, 2), datedRow(3, -5.125, 3), datedRow(4, 1.25, 8), datedRow(5, -0.5, 9)] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  const original = plain(h.owner().record), writes = h.saved.length, calls = h.calls.length;
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.deepEqual(plain(value.report.totals), { incomingISK: '0.30', outgoingISK: '5.125', netISK: '-4.825' });
+  assert.deepEqual(plain(value.comparison.previous.totals), { incomingISK: '1.25', outgoingISK: '0.50', netISK: '0.75' });
+  assert.deepEqual(plain(value.comparison.observedDelta), { incomingISK: '-0.95', outgoingISK: '4.625', netISK: '-5.575' });
+  assert.equal(value.comparison.previous.entries, 2); assert.equal(value.comparison.previous.amountEntries, 2); assert.equal(value.comparison.previous.missingAmountEntries, 0);
+  assert.equal(value.comparison.previous.earliest, '2026-03-06T12:00:00.000Z'); assert.equal(value.comparison.previous.latest, '2026-03-07T12:00:00.000Z');
+  assert.deepEqual(plain(value.comparison.current), { startsAt: '2026-03-08T12:00:00.000Z', endsAt: '2026-03-15T12:00:00.000Z', retentionClipped: false });
+  assert.equal(value.comparison.previous.startsAt, '2026-03-01T12:00:00.000Z'); assert.equal(value.comparison.previous.endsBefore, value.comparison.current.startsAt);
+  assert.equal(value.comparison.previous.retentionClipped, false);
+  assert.deepEqual(plain(h.owner().record), original); assert.equal(h.saved.length, writes);
+  assert.deepEqual(h.calls.slice(calls).map(call => call[0]), ['load', 'open', 'load']);
+  for (const forbidden of ['PRIVATE_DESCRIPTION', 'PRIVATE_REASON', 'first_party', '"balance":']) assert(!JSON.stringify(value.comparison).includes(forbidden));
+});
+
+test('comparison adjacent boundaries partition events once and exclude future observations', async () => {
+  const h = harness({ result: { data: [datedRow(1, 10, 7), datedRow(2, 2, 14), datedRow(3, 3, 7, -1), datedRow(4, 500, 14, -1), datedRow(5, 1, 0), datedRow(6, 200, 0, 1)] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.equal(value.report.entries, 2); assert.equal(value.report.totals.netISK, '11.00');
+  assert.equal(value.report.earliest, '2026-03-08T12:00:00.000Z'); assert.equal(value.report.latest, '2026-03-15T12:00:00.000Z');
+  assert.equal(value.comparison.previous.entries, 2); assert.equal(value.comparison.previous.totals.netISK, '5.00');
+  assert.equal(value.comparison.previous.earliest, '2026-03-01T12:00:00.000Z'); assert.equal(value.comparison.previous.latest, '2026-03-08T11:59:59.999Z');
+  assert.equal(value.comparison.observedDelta.netISK, '6.00');
+});
+
+test('legacy report clock-skew tolerance remains unchanged when comparison is omitted or false', async () => {
+  const h = harness({ result: { data: [datedRow(1, 1, 1), datedRow(2, 2, 0, 60000), datedRow(3, 1, 8)] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  for (const extra of [{}, { comparePrevious: false }]) {
+    const value = await h.run({ operation: 'report', days: 7, ...extra });
+    assert.equal(value.report.entries, 2); assert.equal(value.report.totals.netISK, '3.00'); assert.equal(value.report.latest, '2026-03-15T12:01:00.000Z');
+  }
+  const compared = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.equal(compared.report.entries, 1); assert.equal(compared.report.totals.netISK, '1.00'); assert.equal(compared.comparison.observedDelta.netISK, '0.00');
+  assert.equal(JSON.parse(h.owner().record.encrypted).events.length, 3);
+});
+
+test('retention-clipped comparisons retain honest observations but suppress numeric deltas', async () => {
+  const h = harness({ result: { data: [datedRow(1, 10, 1), datedRow(2, 4, 30), datedRow(3, 900, 30, -1)] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 30, comparePrevious: true });
+  assert.equal(value.comparison.current.retentionClipped, false); assert.equal(value.comparison.previous.retentionClipped, true);
+  assert.equal(value.report.entries, 2); assert.equal(value.report.totals.netISK, '14.00');
+  assert.equal(value.comparison.previous.entries, 0); assert.equal(value.comparison.previous.totals, null); assert.equal(value.comparison.observedDelta, null);
+  const broad = await h.run({ operation: 'report', days: 90, comparePrevious: true });
+  assert.equal(broad.comparison.current.retentionClipped, true); assert.equal(broad.comparison.previous.retentionClipped, true); assert.equal(broad.comparison.observedDelta, null);
+  assert.equal(broad.report.entries, 2); assert.equal(broad.comparison.previous.entries, 0);
+});
+
+test('comparison expiration is evaluated at report time without physical pruning', async () => {
+  const h = harness({ result: { data: [datedRow(1, 12, 1), datedRow(2, 7, 90)] } });
+  await h.enable(90); await h.run({ operation: 'capture' });
+  // Move the clock so the previously retained boundary event is now expired.
+  h.time(base + 1);
+  const expired = await h.run({ operation: 'report', days: 90, comparePrevious: true });
+  assert.equal(expired.report.entries, 1); assert.equal(expired.comparison.previous.entries, 0); assert.equal(expired.comparison.observedDelta, null);
+  assert.equal(JSON.parse(h.owner().record.encrypted).events.length, 2);
+});
+
+for (const missingPeriod of ['current', 'previous']) test('a missing amount in '+missingPeriod+' suppresses the observed delta without losing known amounts', async () => {
+  const unknown = datedRow(3, 1, missingPeriod === 'current' ? 2 : 9); delete unknown.amount;
+  const h = harness({ result: { data: [datedRow(1, 4, 1), datedRow(2, 2, 8), unknown] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.equal(value.report.totals.netISK, '4.00'); assert.equal(value.comparison.previous.totals.netISK, '2.00');
+  assert.equal(missingPeriod === 'current' ? value.report.missingAmountEntries : value.comparison.previous.missingAmountEntries, 1);
+  assert.equal(value.comparison.observedDelta, null);
+});
+
+for (const absentPeriod of ['current', 'previous', 'both']) test('empty '+absentPeriod+' comparison periods remain unknown instead of zero', async () => {
+  const data = absentPeriod === 'both' ? [] : [datedRow(1, 4, absentPeriod === 'current' ? 8 : 1)];
+  const h = harness({ result: { data } }); await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  if (absentPeriod !== 'previous') assert.equal(value.report.totals, null);
+  if (absentPeriod !== 'current') { assert.equal(value.comparison.previous.totals, null); assert.equal(value.comparison.previous.earliest, null); assert.equal(value.comparison.previous.latest, null); }
+  assert.equal(value.comparison.observedDelta, null);
+});
+
+test('legitimate reported zeros produce a known zero observed difference', async () => {
+  const h = harness({ result: { data: [datedRow(1, 0, 1), datedRow(2, 0, 8)] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.deepEqual(plain(value.comparison.observedDelta), { incomingISK: '0.00', outgoingISK: '0.00', netISK: '0.00' });
+});
+
+test('paused history comparisons read saved observations without enabling capture', async () => {
+  const h = harness({ result: { data: [datedRow(1, 5, 1), datedRow(2, 8, 8)] } });
+  await h.enable(30); await h.run({ operation: 'capture' }); await h.run({ operation: 'configure', enabled: false });
+  const saved = h.saved.length, calls = h.calls.length, value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.equal(value.status, 'disabled'); assert.equal(value.settings.enabled, false); assert.equal(value.comparison.observedDelta.netISK, '-3.00');
+  assert.equal(h.saved.length, saved); assert(!h.calls.slice(calls).some(call => ['journal', 'save', 'seal'].includes(call[0])));
+});
+
+test('comparison scope loss and lifecycle changes preserve the existing ownership recheck', async () => {
+  for (const change of ['generation', 'epoch', 'scope', 'disconnect']) {
+    let mutate = false;
+    const h = harness({ onOpen: owner => { if (!mutate) return; if (change === 'generation') owner.record.generation = 'new-generation'; if (change === 'epoch') owner.epoch = 'new-epoch'; if (change === 'scope') owner.scopes = []; if (change === 'disconnect') h.disconnect(); } });
+    await h.enable(30); await h.run({ operation: 'capture' }); mutate = true;
+    await assert.rejects(h.run({ operation: 'report', days: 7, comparePrevious: true }), error => error.status === 409);
+  }
+  const h = harness(); await h.enable(30); await h.run({ operation: 'capture' }); h.owner().scopes = [];
+  await assert.rejects(h.run({ operation: 'report', days: 7, comparePrevious: true }), error => error.status === 403);
+  const status = await h.run({ operation: 'status' }); assert.equal(status.report.entries, 0); assert(!Object.hasOwn(status, 'comparison'));
+});
+
+for (const args of [
+  { operation: 'report', days: 7, comparePrevious: null }, { operation: 'report', comparePrevious: 'true' },
+  { operation: 'report', comparePrevious: 1 }, { operation: 'report', comparePrevious: undefined },
+  { operation: 'report', days: null, comparePrevious: true }, { operation: 'report', days: 14, comparePrevious: true },
+  { operation: 'status', comparePrevious: true }, { operation: 'capture', comparePrevious: true },
+  { operation: 'configure', enabled: false, comparePrevious: true },
+]) test('comparison rejects unsupported or ambiguous arguments '+JSON.stringify(args), async () => {
+  const h = harness(); await assert.rejects(h.run(args), error => error.status === 400);
+  assert.equal(h.calls.length, 0); assert.equal(h.saved.length, 0);
+});
+
+
+for (const unknownPeriod of ['current', 'previous']) test('all missing amounts in '+unknownPeriod+' remain null in comparison', async () => {
+  const data = [datedRow(1, 4, 1), datedRow(2, 2, 8)]; delete data[unknownPeriod === 'current' ? 0 : 1].amount;
+  const h = harness({ result: { data } }); await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.equal(unknownPeriod === 'current' ? value.report.totals : value.comparison.previous.totals, null);
+  assert.equal(value.comparison.observedDelta, null);
+});
+
+test('observed incoming and outgoing differences may independently have either sign', async () => {
+  const h = harness({ result: { data: [datedRow(1, 10, 1), datedRow(2, -1, 2), datedRow(3, 2, 8), datedRow(4, -3, 9)] } });
+  await h.enable(30); await h.run({ operation: 'capture' });
+  const value = await h.run({ operation: 'report', days: 7, comparePrevious: true });
+  assert.deepEqual(plain(value.comparison.observedDelta), { incomingISK: '8.00', outgoingISK: '-2.00', netISK: '10.00' });
+});

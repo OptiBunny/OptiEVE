@@ -9,6 +9,7 @@ const text = z.string().max(2048);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/).refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value);
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value);
 const days = z.union([z.literal(30), z.literal(90), z.literal(365)]);
+const reportDays = z.union([z.literal(7), days]);
 const decimal = z.string().max(345).regex(/^(?:0|[1-9]\d{0,19})(?:\.\d{1,324})?$/);
 const signed = z.string().max(346).regex(/^-?(?:0|[1-9]\d{0,19})(?:\.\d{1,324})?$/);
 const totals = z.strictObject({ incomingISK: decimal, outgoingISK: decimal, netISK: signed });
@@ -20,7 +21,12 @@ const schema = z.strictObject({
   settings: z.strictObject({ enabled: z.boolean(), retentionDays: days }),
   // A rolling 365-day interval can touch 366 UTC dates; permitted clock skew
   // may add one more date just after midnight, without widening the time bound.
-  report: z.strictObject({ days, ...bucket, earliest: date.nullable(), latest: date.nullable(), daily: z.array(z.strictObject({ date: day, ...bucket })).max(367), categories: z.array(z.strictObject({ id: z.enum(categoryIds), label: text, ...bucket })).max(7) }),
+  report: z.strictObject({ days: reportDays, ...bucket, earliest: date.nullable(), latest: date.nullable(), daily: z.array(z.strictObject({ date: day, ...bucket })).max(367), categories: z.array(z.strictObject({ id: z.enum(categoryIds), label: text, ...bucket })).max(7) }),
+  comparison: z.strictObject({
+    current: z.strictObject({ startsAt: date, endsAt: date, retentionClipped: z.boolean() }),
+    previous: z.strictObject({ startsAt: date, endsBefore: date, retentionClipped: z.boolean(), ...bucket, earliest: date.nullable(), latest: date.nullable() }),
+    observedDelta: z.strictObject({ incomingISK: signed, outgoingISK: signed, netISK: signed }).nullable(),
+  }).optional(),
   lastCapture: z.strictObject({ at: date, pagesRead: z.number().int().min(1).max(4), pagesAdvertised: id.nullable(), entriesRead: count, addedEntries: count, coverage: z.enum(['returned_pages', 'partial', 'unknown']), freshness: z.enum(['fresh', 'stale', 'unknown']), retrievedAt: date, cacheExpires: date.nullable() }).nullable(),
   limits: z.strictObject({ maxPages: z.literal(4), maxEvents: z.literal(10000) }), precisionPolicy: text, limitations: z.array(text).max(20),
 });
@@ -28,7 +34,7 @@ const argsSchema = z.discriminatedUnion('operation', [
   z.strictObject({ characterId: id, operation: z.literal('status') }),
   z.strictObject({ characterId: id, operation: z.literal('capture') }),
   z.strictObject({ characterId: id, operation: z.literal('configure'), enabled: z.boolean(), retentionDays: days.optional() }).refine(value => !value.enabled || value.retentionDays !== undefined),
-  z.strictObject({ characterId: id, operation: z.literal('report'), days: days.optional() }),
+  z.strictObject({ characterId: id, operation: z.literal('report'), days: reportDays.optional(), comparePrevious: z.boolean().optional() }),
   z.strictObject({ characterId: id, operation: z.literal('clear'), confirm: z.literal('delete_wallet_history') }),
 ]);
 const invalid = () => new ConnectionResponseError('The wallet history service returned an incomplete response. Reload saved history and try again.');
@@ -57,6 +63,32 @@ function matchingBuckets(rows: WalletActivityBucket[], total: WalletActivityBuck
   });
 }
 
+function validComparison(result: WalletHistoryView, args: WalletHistoryArgs): boolean {
+  const requested = args.operation === 'report' && args.comparePrevious === true;
+  if (!requested) return result.comparison === undefined;
+  const comparison = result.comparison;
+  if (!comparison) return false;
+  const { current, previous, observedDelta } = comparison, report = result.report;
+  const at = Date.parse(result.generatedAt), width = report.days * 86400000, cutoff = at - result.settings.retentionDays * 86400000;
+  if (Date.parse(current.startsAt) !== at - width || current.endsAt !== result.generatedAt ||
+      Date.parse(previous.startsAt) !== at - 2 * width || previous.endsBefore !== current.startsAt ||
+      current.retentionClipped !== (at - width < cutoff) || previous.retentionClipped !== (at - 2 * width < cutoff) ||
+      !validBucket(previous, true) || report.entries + previous.entries > 10000 ||
+      report.latest !== null && Date.parse(report.latest) > at) return false;
+  if (!previous.entries) {
+    if (previous.earliest !== null || previous.latest !== null || previous.totals !== null) return false;
+  } else if (previous.earliest === null || previous.latest === null ||
+      Date.parse(previous.earliest) > Date.parse(previous.latest) ||
+      Date.parse(previous.earliest) < Math.max(at - 2 * width, cutoff) || Date.parse(previous.latest) >= at - width) return false;
+  const canCompare = report.totals !== null && previous.totals !== null && !report.missingAmountEntries && !previous.missingAmountEntries && !current.retentionClipped && !previous.retentionClipped;
+  if (!canCompare) return observedDelta === null;
+  if (observedDelta === null) return false;
+  return (['incomingISK', 'outgoingISK', 'netISK'] as const).every(key => {
+    const [now, before, difference] = parts([report.totals![key], previous.totals![key], observedDelta[key]]);
+    return now - before === difference;
+  });
+}
+
 /** Strictly binds one shared report to its requested character and period. */
 export function walletHistoryResponse(value: unknown, input: WalletHistoryArgs): WalletHistoryView {
   const args = selectedArgs(input), parsed = schema.safeParse(value);
@@ -66,7 +98,7 @@ export function walletHistoryResponse(value: unknown, input: WalletHistoryArgs):
       !validBucket(report, true) || !matchingBuckets(report.daily, report) || !matchingBuckets(report.categories, report) ||
       report.categories.some(row => row.label !== categoryLabels[row.id]) || new Set(report.categories.map(row => row.id)).size !== report.categories.length ||
       report.daily.some((row, i) => i > 0 && row.date <= report.daily[i - 1].date) ||
-      result.status !== (!result.settings.enabled ? 'disabled' : report.entries ? 'partial' : 'empty')) throw invalid();
+      result.status !== (!result.settings.enabled ? 'disabled' : report.entries ? 'partial' : 'empty') || !validComparison(result, args)) throw invalid();
   if (!report.entries) {
     if (report.earliest !== null || report.latest !== null || report.totals !== null || report.daily.length || report.categories.length) throw invalid();
   } else {
