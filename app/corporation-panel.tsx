@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ConnectionResponseError, type Character } from './lib/connection-client';
 import { corporationWorkspaceRequest, formatCorporationCell } from './lib/corporation-workspace-client';
 import type { CorporationWorkspace, CorporationWorkspaceRequest } from './lib/corporation-workspace-types';
+import CorporationProgressCharts from './corporation-progress-charts';
+import CorporationScheduleCharts from './corporation-schedule-charts';
 
 type ListView = 'wallets' | 'contracts' | 'projects' | 'order_history' | 'blueprints' | 'facilities' | 'structures' | 'assets' | 'extractions' | 'freelance_jobs';
 const titles = { wallets: 'Wallet divisions', contracts: 'Corporation contracts', projects: 'Active projects', contract_items: 'Contract items', contract_bids: 'Contract bids', project: 'Project progress', order_history: 'Market order history', blueprints: 'Blueprint library', facilities: 'Corporation facilities', structures: 'Structure fuel & services', assets: 'Corporation assets', asset_detail: 'Asset details', extractions: 'Moon extraction schedule', freelance_jobs: 'Corporation freelance jobs' };
@@ -65,6 +67,8 @@ export default function CorporationPanel({ characters, openConnections }: { char
       <p className="overview-message">{result.message}</p>
       {result.corporationId && <p className="fine">Corporation {result.corporationId}</p>}
       {result.status === 'needs_permission' && <button className="small" onClick={openConnections}>Review access</button>}
+      <CorporationProgressCharts result={result}/>
+      <CorporationScheduleCharts key={`${result.characterId}:${result.corporationId ?? ''}:${result.view}:${result.generatedAt}`} result={result}/>
       {result.rows.length > 0 && <div className="workspace-table-scroll" tabIndex={0} role="region" aria-label={titles[result.view]}><table className="workspace-table">
         <caption>{titles[result.view]} · {result.rows.length} displayed</caption>
         <thead><tr>{result.columns.map(column => <th scope="col" key={column.key}>{column.label}</th>)}{result.rows.some(row => row.action || row.actions?.length) && <th scope="col">Details</th>}</tr></thead>
