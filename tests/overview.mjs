@@ -290,13 +290,13 @@ test('malformed orders, duplicate IDs and overflowing arithmetic cannot form tot
   assert.throws(() => summary.summarizeOverview('orders', [order(), order()], now));
 });
 test('industry distinguishes ready jobs from active jobs past the scheduled end', () => {
-  const data = [{ job_id: 1, status: 'ready', end_date: stamp }, { job_id: 2, status: 'active', end_date: stamp }, { job_id: 3, status: 'active', end_date: '2026-01-02T00:00:00Z' }, { job_id: 4, status: 'paused', end_date: stamp }];
+  const data = [{ job_id: 1, status: 'ready', start_date: '2025-12-31T00:00:00Z', end_date: stamp }, { job_id: 2, status: 'active', start_date: '2025-12-31T00:00:00Z', end_date: stamp }, { job_id: 3, status: 'active', start_date: stamp, end_date: '2026-01-02T00:00:00Z' }, { job_id: 4, status: 'paused', start_date: '2025-12-31T00:00:00Z', end_date: stamp }];
   const result = summary.summarizeOverview('industry', data, now);
   assert.equal(metric(result, 'Ready according to EVE'), 1); assert.equal(metric(result, 'Active past scheduled end'), 1); assert.equal(metric(result, 'Running by schedule'), 1); assert.equal(metric(result, 'Paused jobs'), 1);
 });
 test('unknown industry statuses and dates do not become zeros', () => {
-  assert.throws(() => summary.summarizeOverview('industry', [{ job_id: 1, status: 'unexpected', end_date: stamp }], now));
-  assert.throws(() => summary.summarizeOverview('industry', [{ job_id: 1, status: 'active', end_date: null }], now));
+  assert.throws(() => summary.summarizeOverview('industry', [{ job_id: 1, status: 'unexpected', start_date: stamp, end_date: stamp }], now));
+  assert.throws(() => summary.summarizeOverview('industry', [{ job_id: 1, status: 'active', start_date: stamp, end_date: null }], now));
 });
 test('contracts use offer expiry only for outstanding offers, never as courier delivery deadline', () => {
   const data = [{ contract_id: 1, status: 'outstanding', date_expired: '2026-01-01T12:00:00Z' }, { contract_id: 2, status: 'outstanding', date_expired: stamp }, { contract_id: 3, status: 'in_progress', date_expired: '2025-01-01T00:00:00Z' }];
@@ -328,4 +328,71 @@ test('excluded corporation orders do not create unknown-side personal coverage',
   const result = summary.summarizeOverview('orders', [order(), order({ order_id: 1002, is_corporation: true, is_buy_order: undefined })], now);
   assert.equal(metric(result, 'Personal orders with unknown side'), undefined);
   assert.equal(result.partial, undefined); assert.equal(metric(result, 'Corporation orders excluded'), 1);
+});
+
+// Expected decimal amounts are authored independently, not derived with floating arithmetic.
+test('wallet cents round ties away from zero and do not manufacture a negative zero', () => {
+  for (const [amount, expected] of [[1.005, 1.01], [-1.005, -1.01], [0.005, 0.01], [-0.005, -0.01], [1.0049, 1], [-1.0049, -1], [0.0049, 0], [-0.0049, 0], [5e-324, 0], [-5e-324, 0]]) {
+    assert.equal(metric(summary.summarizeOverview('wallet', amount, now), 'Wallet balance'), expected);
+  }
+});
+test('order additions and quantity notionals round once from the received decimals', () => {
+  const quoted = rows => metric(summary.summarizeOverview('orders', rows, now), 'Remaining sell asking value');
+  assert.equal(quoted([order({ price: 0.1, volume_remain: 1 }), order({ order_id: 1002, price: 0.2, volume_remain: 1 })]), 0.3);
+  assert.equal(quoted([order({ price: 1.005, volume_remain: 3 })]), 3.02);
+  assert.equal(quoted([order({ price: 0.005, volume_remain: 1 }), order({ order_id: 1002, price: 0.005, volume_remain: 1 })]), 0.01);
+  const buys = summary.summarizeOverview('orders', [order({ price: 1.005, volume_remain: 3, is_buy_order: true, escrow: 0.005 }), order({ order_id: 1002, price: 0, volume_remain: 1, is_buy_order: true, escrow: 0.005 })], now);
+  assert.equal(metric(buys, 'Remaining buy bid value'), 3.02); assert.equal(metric(buys, 'Buy-order escrow'), 0.01);
+});
+test('unrepresentable order cents are rejected instead of becoming a plausible different total', () => {
+  const large = order({ price: 90000000000000, volume_remain: 1 });
+  assert.equal(metric(summary.summarizeOverview('orders', [large], now), 'Remaining sell asking value'), 90000000000000);
+  assert.throws(() => summary.summarizeOverview('orders', [large, order({ order_id: 1002, price: 0.01, volume_remain: 1 })], now), summary.OverviewDataError);
+  assert.equal(metric(summary.summarizeOverview('orders', [large, order({ order_id: 1002, price: 0.02, volume_remain: 1 })], now), 'Remaining sell asking value'), 90000000000000.02);
+  const nearLimit = order({ price: 90071992547409.9, volume_remain: 1 });
+  assert.equal(metric(summary.summarizeOverview('orders', [nearLimit], now), 'Remaining sell asking value'), 90071992547409.9);
+  for (const cent of [0.01, 0.02]) assert.throws(() => summary.summarizeOverview('orders', [nearLimit, order({ order_id: 1002, price: cent, volume_remain: 1 })], now), summary.OverviewDataError);
+});
+test('corporation signed sums are exact and cancellation does not depend on division ordering', () => {
+  const balance = amounts => metric(summary.summarizeOverview('wallet', amounts.map((amount, index) => ({ division: index + 1, balance: amount })), now, false), 'Balance of returned divisions');
+  assert.equal(balance([0.1, 0.2, -0.3]), 0);
+  assert.equal(balance([-0.005, -0.005]), -0.01);
+  for (const amounts of [[60000000000000, 60000000000000, -60000000000000], [60000000000000, -60000000000000, 60000000000000], [-60000000000000, 60000000000000, 60000000000000]]) assert.equal(balance(amounts), 60000000000000);
+  for (const amounts of [[90000000000000, 0.01], [-90000000000000, -0.01]]) assert.throws(() => balance(amounts), summary.OverviewDataError);
+});
+test('shared freelance reward projections round cents while overview reserves sum before rounding', () => {
+  const data = { freelance_jobs: [freelance({ reward: { initial: 1.005, remaining: 0.005 } }), freelance({ id: 'abcdef00-0000-0000-0000-000000000002', reward: { initial: 0.005, remaining: 0.005 } })] };
+  const projected = summary.freelanceRows(data);
+  assert.equal(projected[0].initialReward, 1.01); assert.equal(projected[0].remainingReward, 0.01); assert.equal(projected[1].remainingReward, 0.01);
+  for (const personal of [true, false]) assert.equal(metric(summary.summarizeOverview('freelance', data, now, personal), 'Remaining reserve for jobs reporting rewards'), 0.01);
+  const large = { freelance_jobs: [freelance({ reward: { initial: 90000000000000, remaining: 90000000000000 } }), freelance({ id: 'abcdef00-0000-0000-0000-000000000002', reward: { initial: 0.01, remaining: 0.01 } })] };
+  assert.throws(() => summary.summarizeOverview('freelance', large, now), summary.OverviewDataError);
+});
+test('unrepresentable money fails only its section without retaining counts or misleading totals', async () => {
+  const h = harness({ character: async (_user, args) => ({ ...response(args), ...(args.dataset === 'orders' ? { data: [order({ price: 90000000000000, volume_remain: 1 }), order({ order_id: 1002, price: 0.01, volume_remain: 1 })] } : {}) }) });
+  const result = await h.read('synthetic-owner', personalArgs), section = result.sections.find(row => row.id === 'orders');
+  assert.equal(section.status, 'error'); assert.equal(section.coverage, 'unavailable'); assert.equal(section.metrics.length, 0);
+  assert.equal(result.sections.find(row => row.id === 'wallet').status, 'ready');
+});
+test('industry uses both schedule boundaries and preserves provider status separately', () => {
+  const job = (job_id, status, start_date, end_date) => ({ job_id, status, start_date, end_date });
+  const before = '2025-12-31T00:00:00Z', after = '2026-01-02T00:00:00Z', later = '2026-01-03T00:00:00Z';
+  const data = [job(1, 'active', after, later), job(2, 'active', stamp, after), job(3, 'active', before, stamp), job(4, 'paused', after, later), job(5, 'ready', after, later), job(6, 'active', stamp, stamp)];
+  const result = summary.summarizeOverview('industry', data, now);
+  assert.equal(metric(result, 'Jobs returned'), 6); assert.equal(metric(result, 'Running by schedule'), 1);
+  assert.equal(metric(result, 'Active before scheduled start'), 1); assert.equal(metric(result, 'Active past scheduled end'), 2);
+  assert.equal(metric(result, 'Paused jobs'), 1); assert.equal(metric(result, 'Ready according to EVE'), 1);
+  assert.match(result.message, /Provider status and scheduled times are separate evidence/);
+  assert.match(result.message, /Neither schedule nor status proves delivery/);
+});
+test('missing malformed or reversed industry schedules cannot imply running or zero jobs', () => {
+  const valid = { job_id: 1, status: 'active', start_date: stamp, end_date: '2026-01-02T00:00:00Z' };
+  for (const start_date of [undefined, null, 'bad', '2026-02-30T00:00:00Z', '2026-01-03T00:00:00Z']) assert.throws(() => summary.summarizeOverview('industry', [{ ...valid, start_date }], now), summary.OverviewDataError);
+  for (const end_date of [undefined, null, 'bad', '2025-12-31T00:00:00Z']) assert.throws(() => summary.summarizeOverview('industry', [{ ...valid, end_date }], now), summary.OverviewDataError);
+});
+test('invalid industry schedules leave the affected overview section unavailable', async () => {
+  const h = harness({ character: async (_user, args) => ({ ...response(args), ...(args.dataset === 'industry_jobs' ? { data: [{ job_id: 1, status: 'active', start_date: 'bad', end_date: '2026-01-02T00:00:00Z' }] } : {}) }) });
+  const result = await h.read('synthetic-owner', personalArgs), section = result.sections.find(row => row.id === 'industry');
+  assert.equal(section.status, 'error'); assert.equal(section.coverage, 'unavailable'); assert.equal(section.metrics.length, 0);
+  assert.equal(result.sections.find(row => row.id === 'contracts').status, 'ready');
 });
