@@ -1,12 +1,13 @@
 # OptiEVE
 
-A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-three tools through `/mcp`:
+A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-four tools through `/mcp`:
 
 | Tool | Data returned |
 | --- | --- |
 | `connection_status` | Connected characters, granted scopes and setup URLs |
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
+| `wallet_activity_report` | One journal page’s cash-flow totals and categories, with the latest thirty returned UTC dates and explicit omissions |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
 | `read_character_data` | An allowlisted character dataset, with dataset-specific parameters and pagination |
 | `read_corporation_data` | Wallet balances, assets and name/location lookups, order history, contracts and items/bids, industry jobs, blueprints, facilities, structures, mining extractions, freelance jobs, projects and your selected character’s contribution |
@@ -98,6 +99,10 @@ The training queue also shows disjoint schedule buckets: finish dates already el
 In the private chat, `character_training_report` requests those same three feeds for one owned character. It returns SP and level summaries, the ten largest reported skill groups, schedule counts and daily planned finishes, the first twenty upcoming queue entries, and attributes/remap metadata. Omitted group and future-entry counts remain explicit. Section permissions and freshness stay separate; no active-training state, current in-training SP, SP/hour, remap readiness or confirmed completion is inferred. This report adds no history, settings, permission requests or game writes.
 
 **Wallet activity** shows daily incoming/outgoing ISK, net cash flow and fixed activity categories for one explicitly selected journal page. Choose either the character wallet or one corporation wallet division. Amounts are summed with exact integer arithmetic on the received JSON numbers' decimal representations; prior provider or JSON parsing precision cannot be recovered. Missing amounts remain unknown, and days without returned rows are omitted. Transfers are included as movements, so these charts do not establish profit, wealth or historical balances. Loading another page replaces the chart; no pages or accounts are combined. The application accepts at most 2,500 rows in one response. Raw journal entries, counterparties, descriptions, balances and tax fields are excluded from this dashboard's response.
+
+A diverging daily net chart places outgoing-dominant dates left of zero and incoming-dominant dates right. It shows at most the latest thirty returned UTC dates, sharing a scale within that chart; tiny nonzero values receive a minimum visible marker and exact values remain in the table. Unknown totals, missing amounts and observed zero stay distinct. These are returned dates, not a complete thirty-day period. The existing full daily table retains all dates from the selected page.
+
+In the private chat, `wallet_activity_report` returns the same page's totals, activity categories, coverage and freshness, with daily detail limited to the latest thirty returned UTC dates and explicit total/omitted date counts. Supply an owned `characterId` and `entity`; corporation reads require a division from 1 to 7 and derive current corporation membership, while character reads forbid a division. Optional `page` defaults to 1. It uses the saved wallet grant, performs one journal-page read and never enables or captures saved history.
 
 The **Industry → Mining ledger** view adds a daily bar chart for one selected material type across the displayed batch. Quantities for different types are never added together. The chart keeps real UTC date spacing, distinguishes reported zero from missing days, and offers an exact-value table. It uses the existing response and optional public labels, with no extra mining request or history store.
 

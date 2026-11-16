@@ -112,6 +112,15 @@ dates never establish a zero or paused queue. Browser validation reconstructs
 counts and daily groups from validated entries and binds the schedule clock to
 the selected report. Chart/table filters are local and reset with the result.
 No new permission, retained data or background work is introduced.
+The wallet_activity_report tool validates an owned character, wallet entity, explicit
+corporation division when applicable and a page from 1 to 500. It reuses the
+on-demand wallet reader and current corporation membership checks; no caller
+corporation ID or alternate endpoint is accepted. Full-page exact decimal totals,
+fixed categories, coverage and freshness accompany only the latest thirty
+returned UTC daily groups, with total and omitted counts. Projection excludes raw
+journal fields and does not collect history. The browser net chart applies the
+same thirty-date display bound, distinguishes unknown and partial amounts from
+zero, and keeps exact decimal values beside bounded proportional marks.
 History mutations must be standalone MCP requests: batches reject them before
 execution so a committed change cannot lose its confirmation to the read-response
 budget. Read-only history status and reports remain batch-compatible.

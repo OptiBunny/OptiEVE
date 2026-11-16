@@ -23,7 +23,7 @@ function harness(options = {}) {
   const characterWorkspaceCalls = [];
   const manufacturingCalls = [];
   const historyCalls = [];
-  const overviewCalls = [], overviewFeedCalls = [], trainingCalls = [];
+  const overviewCalls = [], overviewFeedCalls = [], trainingCalls = [], walletReportCalls = [];
   let realOverview;
   const execute = (code, require = () => { throw new Error('Unexpected import'); }) => {
     const fixtureModule = { exports: {} };
@@ -93,6 +93,7 @@ function harness(options = {}) {
     }
     return manufacturingModules.get(name);
   }
+  const validateWalletArgs = execute(source('app/lib/wallet-analytics.ts'), name => name === './eve' ? backend : {}).validateWalletAnalyticsArgs;
   const validateHistoryArgs = execute(source('app/lib/wallet-history.ts'), name => name === './eve' ? backend : {}).validateWalletHistoryArgs;
   const historyBackend = { runWalletHistory: async (user, args, context) => { validateHistoryArgs(args); historyCalls.push({ user, args, signal: context.signal }); if (options.historyError) throw new Error('OMIT_PRIVATE_HISTORY'); return { characterId: args.characterId, operation: args.operation, synthetic: true }; } };
   let bodyModule;
@@ -165,7 +166,8 @@ function harness(options = {}) {
     if (name.endsWith('/character-training-report')) return { readCharacterTrainingReport: async (user, args, context) => { calls.push('training-report'); trainingCalls.push({ user, args, signal: context.signal }); if (options.trainingError) throw new Error('OMIT_PRIVATE_TRAINING'); if (options.trainingOwnerError) throw new EveError('Choose a connected character.', 404); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/character-analytics')) return { readCharacterAnalytics: async (user, args, context) => { calls.push('character-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/clone-analytics')) return { readCloneAnalytics: async (user, args, context) => { calls.push('clone-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
-    if (name.endsWith('/wallet-analytics')) return { readWalletAnalytics: async (user, args, context) => { calls.push('wallet-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
+    if (name.endsWith('/wallet-activity-report')) return { readWalletActivityReport: async (user, args, context) => { calls.push('wallet-report'); walletReportCalls.push({ user, args, signal: context.signal }); if (options.walletReportError) throw new Error('OMIT_PRIVATE_WALLET'); if (options.walletReportOwnerError) throw new EveError('Choose a connected character.', 404); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
+    if (name.endsWith('/wallet-analytics')) return { validateWalletAnalyticsArgs: validateWalletArgs, readWalletAnalytics: async (user, args, context) => { calls.push('wallet-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/inventory-analytics')) return { readInventoryAnalytics: async (user, args, context) => { calls.push('inventory-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/industry-analytics')) return { readIndustryAnalytics: async (user, args, context) => { calls.push('industry-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/order-analytics')) return { readOrderAnalytics: async (user, args, context) => { calls.push('order-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
@@ -178,7 +180,7 @@ function harness(options = {}) {
     if (name.endsWith('/request-body')) return bodyModule ??= execute(source('app/lib/request-body.ts'));
     throw new Error('Unexpected import');
   };
-  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls, overviewCalls, overviewFeedCalls, trainingCalls };
+  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls, overviewCalls, overviewFeedCalls, trainingCalls, walletReportCalls };
 }
 
 function request(value, options = {}) {
@@ -205,7 +207,7 @@ test('Sites discovery retains existing tools and exposes the optional corporatio
   assert.deepEqual(discovery.result.capabilities, { tools: {} });
   assert.equal(discovery.result.serverInfo.name, 'OptiEVE');
   const listing = await (await mcp.POST(request(rpc('tools/list')))).json();
-  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'character_overview', 'character_training_report', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
+  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'character_overview', 'character_training_report', 'wallet_activity_report', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
   assert(listing.result.tools.filter(item => !historyNames.includes(item.name)).every(item => item.annotations.readOnlyHint && !item.annotations.destructiveHint));
 });
 
@@ -1196,7 +1198,7 @@ test('legacy batches still permit saved history status and reports', async () =>
 
 test('saved history comparisons reuse the existing read-only tool with bounded report options', async () => {
   const h = harness(), listed = (await (await h.mcp.POST(request(rpc('tools/list')))).json()).result.tools;
-  assert.equal(listed.length, 23);
+  assert.equal(listed.length, 24);
   const report = listed.find(item => item.name === 'wallet_history_report');
   assert.deepEqual(report.inputSchema.properties.days.enum, [7, 30, 90, 365]);
   assert.equal(report.inputSchema.properties.comparePrevious.type, 'boolean');
@@ -1254,4 +1256,47 @@ test('training report preserves ownership refusal and hides unexpected exception
   const failed = harness({ trainingError: true });
   const response = await (await failed.mcp.POST(request(tool('character_training_report', { characterId: 90000001 })))).json();
   assert.equal(response.result.isError, true); assert.equal(response.result.content[0].text, 'Request failed.'); assert(!JSON.stringify(response).includes('OMIT_PRIVATE'));
+});
+
+
+test('wallet activity report exposes bounded selectors and read-only annotations', async () => {
+  const h = harness(), listing = await (await h.mcp.POST(request(rpc('tools/list')))).json();
+  const item = listing.result.tools.find(row => row.name === 'wallet_activity_report');
+  assert.deepEqual(item.inputSchema, { type: 'object', required: ['characterId', 'entity'], properties: { characterId: { type: 'integer', minimum: 1 }, entity: { type: 'string', enum: ['character', 'corporation'] }, division: { type: 'integer', minimum: 1, maximum: 7 }, page: { type: 'integer', minimum: 1, maximum: 500 } }, additionalProperties: false });
+  assert.deepEqual(item.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.equal(h.calls.length, 0);
+});
+test('wallet activity report forwards gateway owner, selected page and cancellation', async () => {
+  for (const args of [{ characterId: 90000001, entity: 'character' }, { characterId: 90000001, entity: 'corporation', division: 7, page: 500 }]) {
+    const h = harness(), input = request(tool('wallet_activity_report', args));
+    const response = await (await h.mcp.POST(input)).json();
+    assert.equal(response.result.isError, undefined); assert.deepEqual(h.calls, ['wallet-report']);
+    assert.equal(h.walletReportCalls[0].user, 'synthetic-user');
+    assert.deepEqual(JSON.parse(JSON.stringify(h.walletReportCalls[0].args)), args);
+    assert.equal(h.walletReportCalls[0].signal, input.signal);
+    assert.deepEqual(JSON.parse(response.result.content[0].text), { characterId: args.characterId, entity: args.entity, synthetic: true });
+  }
+});
+test('wallet activity report rejects invalid selectors before invoking a reader', async () => {
+  const h = harness(), personal = { characterId: 90000001, entity: 'character' };
+  for (const args of [null, {}, { characterId: 90000001 }, { ...personal, characterId: 0 }, { ...personal, characterId: Number.MAX_SAFE_INTEGER + 1 }, { ...personal, characterId: '90000001' }, { ...personal, entity: 'all' }, { ...personal, division: 1 }, { ...personal, entity: 'corporation' }, { ...personal, entity: 'corporation', division: 0 }, { ...personal, entity: 'corporation', division: 8 }, { ...personal, page: 0 }, { ...personal, page: 501 }, { ...personal, page: 1.5 }, { ...personal, corporationId: 98000001 }, { ...personal, userId: 'other' }, { ...personal, dataset: 'assets' }, { ...personal, url: 'https://attacker.example' }, { ...personal, limit: 5000 }]) {
+    await rpcError(await h.mcp.POST(request(tool('wallet_activity_report', args))), -32602, 1);
+  }
+  assert.deepEqual(h.calls, []); assert.equal(h.walletReportCalls.length, 0);
+});
+test('wallet activity report requires gateway identity and ignores notifications', async () => {
+  const h = harness(), args = { characterId: 90000001, entity: 'character' };
+  const response = await (await h.mcp.POST(request(tool('wallet_activity_report', args), { headers: { 'oai-authenticated-user-id': '' } }))).json();
+  assert.equal(response.result.isError, true);
+  const notification = await h.mcp.POST(request({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'wallet_activity_report', arguments: args } }));
+  assert.equal(notification.status, 202); assert.deepEqual(h.calls, []);
+});
+test('wallet activity report preserves owner denial and redacts unexpected failures', async () => {
+  const args = { characterId: 90000001, entity: 'character' };
+  for (const options of [{ walletReportOwnerError: true }, { walletReportError: true }]) {
+    const h = harness(options), response = await (await h.mcp.POST(request(tool('wallet_activity_report', args)))).json();
+    assert.equal(response.result.isError, true); assert.equal(h.walletReportCalls.length, 1);
+    assert.doesNotMatch(JSON.stringify(response), /OMIT_PRIVATE/);
+    assert.deepEqual(h.calls, ['wallet-report']);
+  }
 });
