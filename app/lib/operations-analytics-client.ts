@@ -138,16 +138,17 @@ async function read(path: string, args: unknown, signal?: AbortSignal): Promise<
   const controller = new AbortController(), abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
   const timer = setTimeout(abort, 60000);
+  let response: Response | undefined;
   try {
     controller.signal.throwIfAborted();
-    const response = await fetch('/api/eve/' + path, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args), signal: controller.signal });
+    response = await fetch('/api/eve/' + path, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args), signal: controller.signal });
     if (!response.ok) throw new ConnectionResponseError(response.status === 401 ? 'Sign in again to load your operations.' : response.status === 404 ? 'This character is no longer connected. Reload connection status.' : 'Operations could not be loaded. Try again or review the connection.', response.status);
     if (!response.headers.get('content-type')?.includes('application/json')) throw invalid();
     const value: unknown = await response.json(); controller.signal.throwIfAborted(); return value;
   } catch (error) {
     if (error instanceof ConnectionResponseError) throw error;
     throw new ConnectionResponseError(controller.signal.aborted ? 'The operations request was cancelled or timed out.' : 'The operations service could not be reached. Try again.');
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+  } finally { if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {}); clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }
 export async function industryAnalyticsRequest(args: IndustryAnalyticsArgs, signal?: AbortSignal) {
   if (!industryArgsSchema.safeParse(args).success) throw invalidSelection();

@@ -69,14 +69,15 @@ export async function blueprintAnalyticsRequest(input: BlueprintAnalyticsArgs, s
   const controller = new AbortController(), abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
   const timer = setTimeout(abort, 60000);
+  let response: Response | undefined;
   try {
     controller.signal.throwIfAborted();
-    const response = await fetch('/api/eve/blueprint-analytics', { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal: controller.signal });
+    response = await fetch('/api/eve/blueprint-analytics', { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal: controller.signal });
     if (!response.ok) throw new ConnectionResponseError(response.status === 401 ? 'Sign in again to load blueprints.' : response.status === 404 ? 'This character is no longer connected. Reload connection status.' : 'Blueprints could not be loaded. Try again or review the connection.', response.status);
     if (!response.headers.get('content-type')?.includes('application/json')) throw invalid();
     const value: unknown = await response.json(); controller.signal.throwIfAborted(); return blueprintAnalyticsResponse(value, input);
   } catch (error) {
     if (error instanceof ConnectionResponseError) throw error;
     throw new ConnectionResponseError(controller.signal.aborted ? 'The blueprint request was cancelled or timed out.' : 'The blueprint service could not be reached. Try again.');
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+  } finally { if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {}); clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }
