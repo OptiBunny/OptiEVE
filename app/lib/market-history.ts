@@ -39,4 +39,3 @@ export function createRegionalMarketHistoryReader(read: Reader = readManufacturi
 }
 
 export const readRegionalMarketHistory = createRegionalMarketHistoryReader();
-

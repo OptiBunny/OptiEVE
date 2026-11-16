@@ -30,14 +30,17 @@ export default function CorporationPanel({ characters, openConnections, initialC
   const [current, setCurrent] = useState<CorporationWorkspaceRequest | null>(null);
   const [trail, setTrail] = useState<CorporationWorkspaceRequest[]>([]);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [signedOut, setSignedOut] = useState(false);
+  const [generation, setGeneration] = useState(0);
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
   function clear() {
+    setGeneration(value => value + 1);
     active.current?.abort(); active.current = null;
     setResult(null); setCurrent(null); setTrail([]); setBusy(false); setError(''); setSignedOut(false);
   }
   async function load(args: CorporationWorkspaceRequest, history: CorporationWorkspaceRequest[] = []) {
     if (!characters.some(character => character.characterId === characterId) || args.characterId !== characterId) return;
+    setGeneration(value => value + 1);
     active.current?.abort();
     const controller = new AbortController(); active.current = controller;
     setResult(null); setCurrent(args); setTrail(history); setBusy(true); setError(''); setSignedOut(false);
@@ -69,7 +72,7 @@ export default function CorporationPanel({ characters, openConnections, initialC
       {result.corporationId && <p className="fine">Corporation {result.corporationId}</p>}
       {result.status === 'needs_permission' && <button className="small" onClick={openConnections}>Review access</button>}
       <CorporationProgressCharts result={result}/>
-      <CorporationScheduleCharts key={`${result.characterId}:${result.corporationId ?? ''}:${result.view}:${result.generatedAt}`} result={result}/>
+      <CorporationScheduleCharts key={`${generation}:${result.characterId}:${result.corporationId ?? ''}:${result.view}:${result.generatedAt}`} result={result}/>
       {result.rows.length > 0 && <div className="workspace-table-scroll" tabIndex={0} role="region" aria-label={titles[result.view]}><table className="workspace-table">
         <caption>{titles[result.view]} · {result.rows.length} displayed</caption>
         <thead><tr>{result.columns.map(column => <th scope="col" key={column.key}>{column.label}</th>)}{result.rows.some(row => row.action || row.actions?.length) && <th scope="col">Details</th>}</tr></thead>

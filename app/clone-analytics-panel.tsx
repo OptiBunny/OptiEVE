@@ -41,9 +41,10 @@ export function CloneAnalyticsResults({ result, openConnections }: { result: Clo
 
 export default function CloneAnalyticsPanel({ characters, openConnections }: { characters: Character[]; openConnections: () => void }) {
   const [characterId, setCharacterId] = useState(characters[0]?.characterId ?? 0), [result, setResult] = useState<CloneAnalytics | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [signedOut, setSignedOut] = useState(false);
+  const [generation, setGeneration] = useState(0);
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
-  function clear() { request.current?.abort(); request.current = null; setResult(null); setBusy(false); setError(''); setSignedOut(false); }
+  function clear() { setGeneration(value => value + 1); request.current?.abort(); request.current = null; setResult(null); setBusy(false); setError(''); setSignedOut(false); }
   async function load() {
     clear(); const controller = new AbortController(); request.current = controller; setBusy(true);
     try { const value = await fetchCloneAnalytics({ characterId }, controller.signal); if (request.current === controller && !controller.signal.aborted) setResult(value); }
@@ -56,6 +57,6 @@ export default function CloneAnalyticsPanel({ characters, openConnections }: { c
     <p className="overview-hint">Loads clone and active-implant feeds for one character using its existing read grants. Each feed keeps separate freshness. No clone jump, relocation or implant change can be performed here. Results stay in this view only.</p>
     {error && <div className="alert" role="alert">{error}{signedOut && <p><a href="/signin-with-chatgpt?return_to=%2F" target="_top">Sign in with ChatGPT</a></p>}</div>}
     <p className="overview-state" role="status">{busy ? 'Reading the selected clone and implant snapshots…' : result ? result.message : 'Choose a character, then load clones.'}</p>
-    {result && <CloneAnalyticsResults key={`${result.characterId}-${result.generatedAt}`} result={result} openConnections={openConnections}/>}
+    {result && <CloneAnalyticsResults key={`${generation}-${result.characterId}-${result.generatedAt}`} result={result} openConnections={openConnections}/>}
   </section>;
 }
