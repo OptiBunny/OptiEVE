@@ -224,8 +224,28 @@ export function createManufacturingMarketReader(dependencies: Dependencies = {})
       complete: manufacturingCostIndex !== null && adjustedPrices.every(row => row.adjustedPriceISK !== null), sourceFreshness: freshness(sources, completedAt), sources,
       limitations: ['Adjusted prices are industry valuation inputs, not executable material purchase prices.', 'The system manufacturing index alone is not the installation fee. Facility modifiers, taxes, surcharges and rounding require explicit assumptions or an in-game job quote.', 'Average market prices are descriptive global inputs, not station prices. Missing prices or indices are not assumed to be zero.'] };
   }
-  return { quote, history, costs };
+  // A price-only join for owned inventory references; no system or private reads.
+  async function referencePrices(input: unknown, options: Options = {}) {
+    if (!record(input) || Reflect.ownKeys(input).some(key => key !== 'typeIds') || !Object.hasOwn(input, 'typeIds') || (!ids(input.typeIds, 1, 1000) || !Array.from(input.typeIds).every(id => integer(id, 1)))) return fail('Choose 1–1,000 unique public inventory type IDs.');
+    const selected = [...input.typeIds], signal = signalFor(options), path = '/markets/prices';
+    if (!pricesCache.has(path)) pricesCache.set(path, get(path, signal, 12 * 1024 * 1024));
+    const response = await pricesCache.get(path)!; signal.throwIfAborted();
+    if (!Array.isArray(response.data) || response.data.length > 100000) return fail();
+    const wanted = new Set(selected), found = new Map<number, number | null>(), seen = new Set<number>();
+    for (const row of response.data) {
+      if (!record(row) || !integer(row.type_id, 1) || seen.has(row.type_id)) return fail();
+      seen.add(row.type_id);
+      if (!wanted.has(row.type_id)) continue;
+      const average = Object.hasOwn(row, 'average_price') ? row.average_price : null;
+      if (average !== null && (typeof average !== 'number' || !Number.isFinite(average) || average < 0 || average > Number.MAX_SAFE_INTEGER) || Object.hasOwn(row, 'average_price') && average === null) return fail();
+      found.set(row.type_id, average as number | null);
+    }
+    signal.throwIfAborted();
+    return { prices: selected.map(typeId => ({ typeId, averagePrice: found.get(typeId) ?? null })), returnedTypes: response.data.length, source: response.source };
+  }
+  return { quote, history, costs, referencePrices };
 }
 export const readManufacturingStationQuote = (input: unknown, options?: Options) => createManufacturingMarketReader().quote(input, options);
 export const readManufacturingMarketHistory = (input: unknown, options?: Options) => createManufacturingMarketReader().history(input, options);
 export const readManufacturingIndustryCosts = (input: unknown, options?: Options) => createManufacturingMarketReader().costs(input, options);
+export const readManufacturingReferencePrices = (input: unknown, options?: Options) => createManufacturingMarketReader().referencePrices(input, options);
