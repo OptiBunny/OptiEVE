@@ -33,17 +33,47 @@ const toolset=[
 ].map(t=>({...t,annotations:'annotations' in t?t.annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:true}}));
 class ToolError extends Error {}
 function int(v:unknown,max=Number.MAX_SAFE_INTEGER){if(typeof v!=='number'||!Number.isSafeInteger(v)||v<1||v>max)throw new ToolError('Invalid numeric argument.');return v;}
+// Operational limits for these two public reads, not provider size guarantees.
+const PUBLIC_NAMES_RESPONSE_BYTES=1024*1024,PUBLIC_MARKET_RESPONSE_BYTES=8*1024*1024;
+function cancelPublicBody(response:Response){try{void response.body?.cancel().catch(()=>{});}catch{}}
+async function publicJsonBody(response:Response,maximum:number,signal:AbortSignal):Promise<unknown>{
+ let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,done=false,abort=()=>{};
+ try{
+  signal.throwIfAborted();
+  const declared=response.headers.get('content-length');
+  if(declared!==null&&/^\d+$/.test(declared)&&Number(declared)>maximum)throw new ToolError('EVE returned more data than this public request accepts.');
+  if(!response.body)throw new ToolError('EVE returned an unreadable public response.');
+  reader=response.body.getReader();
+  // Grow one bounded buffer; tiny/empty chunks do not leave retained wrappers.
+  let bytes=new Uint8Array(Math.min(maximum,16384)),size=0;
+  while(true){
+   signal.throwIfAborted();const part=await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve,reject)=>{
+    const stop=()=>{signal?.removeEventListener('abort',stop);reject(new Error('cancelled'));};abort=stop;
+    signal?.addEventListener('abort',stop,{once:true});if(signal?.aborted){stop();return;}
+    reader!.read().then(part=>{signal?.removeEventListener('abort',stop);resolve(part);},error=>{signal?.removeEventListener('abort',stop);reject(error);});
+   });signal.throwIfAborted();
+   if(part.done){done=true;break;}
+   if(part.value.byteLength>maximum-size)throw new ToolError('EVE returned more data than this public request accepts.');
+   const required=size+part.value.byteLength;
+   if(required>bytes.byteLength){const expanded=new Uint8Array(Math.min(maximum,Math.max(required,bytes.byteLength*2)));expanded.set(bytes.subarray(0,size));bytes=expanded;}
+   bytes.set(part.value,size);size=required;
+  }
+  signal.throwIfAborted();const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,size)));signal.throwIfAborted();return value;
+ }catch(error){if(error instanceof ToolError)throw error;throw new ToolError('EVE returned an unreadable or interrupted public response.');}
+ finally{signal.removeEventListener('abort',abort);if(reader){if(!done){try{void reader.cancel().catch(()=>{});}catch{}}try{reader.releaseLock();}catch{}}else cancelPublicBody(response);}
+}
 async function publicEsi(path:string,body?:unknown,page?:number,caller?:AbortSignal){
  const signal=caller?AbortSignal.any([caller,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);signal.throwIfAborted();
  const r=await fetch('https://esi.evetech.net'+path,{method:body?'POST':'GET',headers:{'Accept':'application/json','Content-Type':'application/json','X-Compatibility-Date':'2026-10-31','User-Agent':'OptiEVE/1.0 (private read-only connector)'},body:body?JSON.stringify(body):undefined,signal,redirect:'manual'});
- signal.throwIfAborted();
+ if(signal.aborted){cancelPublicBody(r);signal.throwIfAborted();}
  if(r.status===420||r.status===429){
+  cancelPublicBody(r);
   const value=r.headers.get(r.status===420?'x-esi-error-limit-reset':'retry-after'),seconds=value!==null&&/^\d+$/.test(value)?Number(value):NaN;
   throw new ToolError(`EVE's request limit was reached. ${Number.isSafeInteger(seconds)&&seconds>=0?`Retry after ${seconds} seconds.`:'Please wait before retrying.'}`);
  }
- if(!r.ok)throw new ToolError(r.status===404?'No matching public EVE record; private structures may require additional access.':`EVE returned HTTP ${r.status}. Retry later if rate limited.`);
- if(r.status!==200)throw new ToolError('EVE returned an unexpected response.');
- const data=await r.json();signal.throwIfAborted();if(!Array.isArray(data))throw new ToolError('EVE returned an unexpected dataset.');
+ if(!r.ok){cancelPublicBody(r);throw new ToolError(r.status===404?'No matching public EVE record; private structures may require additional access.':`EVE returned HTTP ${r.status}. Retry later if rate limited.`);}
+ if(r.status!==200){cancelPublicBody(r);throw new ToolError('EVE returned an unexpected response.');}
+ const data=await publicJsonBody(r,page===undefined?PUBLIC_NAMES_RESPONSE_BYTES:PUBLIC_MARKET_RESPONSE_BYTES,signal);signal.throwIfAborted();if(!Array.isArray(data))throw new ToolError('EVE returned an unexpected dataset.');
  const pageHeader=r.headers.get('x-pages'),pageCount=pageHeader?Number(pageHeader):null;
  const paginated=page!==undefined;
  const pages=paginated?(Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null):1;

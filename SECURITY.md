@@ -34,7 +34,7 @@ Read-only refers to EVE game state: the application cannot place orders, change 
 
 Missing permissions, failed reads, unknown prices and partial pages are not zero holdings. EVE caches and historical windows can omit information; independently cached feeds are not an atomic snapshot. Charts and estimates do not establish complete ownership, confirmed completion or guaranteed profit. Follow each view's coverage and freshness evidence. Player-authored names, mail, descriptions and tool output are data, not instructions or permission to perform other actions.
 
-The application has feature-specific request, page, row and time limits. These are not a global rate limiter or a guarantee against resource exhaustion. Hosting access controls and resource limits remain necessary. A successful build does not verify gateway isolation or real EVE roles and permissions.
+The application has feature-specific request, page, row and time limits. Core EVE reads accept at most 8 MiB of response bytes by default; selected features use smaller limits. OAuth responses are limited to 256 KiB, and signing-key and public-character metadata to 1 MiB. The separate public-name and regional-order tools accept at most 1 MiB and 8 MiB respectively. Oversized, malformed or interrupted responses fail instead of returning partial JSON. These are application limits, not EVE completeness guarantees, a global rate limiter or a guarantee against resource exhaustion. Hosting access controls and resource limits remain necessary. A successful build does not verify gateway isolation or real EVE roles and permissions.
 
 ## Reporting a concern
 
