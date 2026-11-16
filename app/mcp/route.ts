@@ -30,15 +30,17 @@ const toolset=[
 ].map(t=>({...t,annotations:'annotations' in t?t.annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:true}}));
 class ToolError extends Error {}
 function int(v:unknown,max=Number.MAX_SAFE_INTEGER){if(typeof v!=='number'||!Number.isSafeInteger(v)||v<1||v>max)throw new ToolError('Invalid numeric argument.');return v;}
-async function publicEsi(path:string,body?:unknown,page?:number){
- const r=await fetch('https://esi.evetech.net'+path,{method:body?'POST':'GET',headers:{'Accept':'application/json','Content-Type':'application/json','X-Compatibility-Date':'2026-10-31','User-Agent':'OptiEVE/1.0 (private read-only connector)'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(15000),redirect:'manual'});
+async function publicEsi(path:string,body?:unknown,page?:number,caller?:AbortSignal){
+ const signal=caller?AbortSignal.any([caller,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000);signal.throwIfAborted();
+ const r=await fetch('https://esi.evetech.net'+path,{method:body?'POST':'GET',headers:{'Accept':'application/json','Content-Type':'application/json','X-Compatibility-Date':'2026-10-31','User-Agent':'OptiEVE/1.0 (private read-only connector)'},body:body?JSON.stringify(body):undefined,signal,redirect:'manual'});
+ signal.throwIfAborted();
  if(r.status===420||r.status===429){
   const value=r.headers.get(r.status===420?'x-esi-error-limit-reset':'retry-after'),seconds=value!==null&&/^\d+$/.test(value)?Number(value):NaN;
   throw new ToolError(`EVE's request limit was reached. ${Number.isSafeInteger(seconds)&&seconds>=0?`Retry after ${seconds} seconds.`:'Please wait before retrying.'}`);
  }
  if(!r.ok)throw new ToolError(r.status===404?'No matching public EVE record; private structures may require additional access.':`EVE returned HTTP ${r.status}. Retry later if rate limited.`);
  if(r.status!==200)throw new ToolError('EVE returned an unexpected response.');
- const data=await r.json();if(!Array.isArray(data))throw new ToolError('EVE returned an unexpected dataset.');
+ const data=await r.json();signal.throwIfAborted();if(!Array.isArray(data))throw new ToolError('EVE returned an unexpected dataset.');
  const pageHeader=r.headers.get('x-pages'),pageCount=pageHeader?Number(pageHeader):null;
  const paginated=page!==undefined;
  const pages=paginated?(Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null):1;
@@ -161,6 +163,7 @@ async function dispatch(message:unknown,req:Request,inBatch:boolean){
  const user=req.headers.get('oai-authenticated-user-id');
  if(!user)return result({isError:true,content:[{type:'text',text:'Sign in and connect the private OptiEVE plugin first.'}]});
  try{
+  req.signal.throwIfAborted();
   let data;
   if(tool.name==='connection_status')data=await getStatus(user);
   else if(tool.name==='character_overview')data=await readOverview(user,{characterId:a.characterId,view:'personal'},{signal:req.signal});
@@ -168,13 +171,15 @@ async function dispatch(message:unknown,req:Request,inBatch:boolean){
   else if(tool.name==='wallet_activity_report')data=await readWalletActivityReport(user,a,{signal:req.signal});
   else if(tool.name==='contracts_report')data=await readContractsReport(user,a,{signal:req.signal});
   else if(tool.name==='market_transactions_report')data=await readMarketTransactionsReport(user,a,{signal:req.signal});
-  else if(tool.name==='read_private_data')data=await readEve(user,a as Parameters<typeof readEve>[1]);
-  else if(tool.name==='read_character_data')data=await readCharacterData(user,a as CharacterReadArgs);
-  else if(tool.name==='read_corporation_data')data=await readCorporationData(user,a as CorporationReadArgs);
-  else if(tool.name==='resolve_names')data=await publicEsi('/universe/names',(a.ids as unknown[]).map(value=>int(value)));
-  else if(tool.name==='public_market'){const region=int(a.regionId),type=int(a.typeId),page=int(a.page??1,500),side=a.side??'all';data=await publicEsi(`/markets/${region}/orders?type_id=${type}&order_type=${side}&page=${page}`,undefined,page);}
+  else if(tool.name==='read_private_data')data=await readEve(user,a as Parameters<typeof readEve>[1],req.signal);
+  else if(tool.name==='read_character_data')data=await readCharacterData(user,a as CharacterReadArgs,req.signal);
+  else if(tool.name==='read_corporation_data')data=await readCorporationData(user,a as CorporationReadArgs,req.signal);
+  else if(tool.name==='resolve_names')data=await publicEsi('/universe/names',(a.ids as unknown[]).map(value=>int(value)),undefined,req.signal);
+  else if(tool.name==='public_market'){const region=int(a.regionId),type=int(a.typeId),page=int(a.page??1,500),side=a.side??'all';data=await publicEsi(`/markets/${region}/orders?type_id=${type}&order_type=${side}&page=${page}`,undefined,page,req.signal);}
   else if(walletHistoryToolset.some(item=>item.name===tool.name))data=await callWalletHistoryTool(tool.name,user,a,req.signal);
   else data=await callManufacturingTool(tool.name,user,a,req.signal);
+  // Do not publish a late result from a cancelled legacy/public read.
+  if(['read_private_data','read_character_data','read_corporation_data','resolve_names','public_market'].includes(tool.name))req.signal.throwIfAborted();
   return result({content:[{type:'text',text:JSON.stringify(data)}]});
  }catch(error){
   const safe=publicError(error);
