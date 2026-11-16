@@ -212,7 +212,7 @@ try {
   check(initialized.serverInfo.name === 'OptiEVE', 'Unexpected MCP server identity');
   check(initialized.instructions.includes('assess_manufacturing') && initialized.instructions.includes('No game writes'), 'Manufacturing guidance must reach the real MCP client');
   const toolNames = (await rpc('tools/list')).result.tools.map(tool => tool.name).sort();
-  check(JSON.stringify(toolNames) === JSON.stringify(['connection_status', 'public_market', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing', 'manufacturing_compare', 'manufacturing_plan', 'wallet_history_status', 'wallet_history_report', 'configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'].sort()), 'Unexpected MCP tool catalog');
+  check(JSON.stringify(toolNames) === JSON.stringify(['connection_status', 'character_overview', 'public_market', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing', 'manufacturing_compare', 'manufacturing_plan', 'wallet_history_status', 'wallet_history_report', 'configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'].sort()), 'Unexpected MCP tool catalog');
   check((await rpc('tools/call', { name: 'connection_status', arguments: {} })).result.isError === true, 'Missing MCP identity must be rejected');
   const connection = (await rpc('tools/call', { name: 'connection_status', arguments: {} }, true)).result;
   check(!connection.isError && JSON.parse(connection.content[0].text).characters.length === 0, 'Synthetic MCP status must be empty');
@@ -465,6 +465,16 @@ try {
     expectStatus(response, 200); check(/no-store/.test(response.headers.get('cache-control')), 'History must not be cached');
     return JSON.parse(response.text);
   };
+  const overviewSeed = join(temporary, 'overview-synthetic.sql');
+  writeFileSync(overviewSeed, "INSERT INTO eve_connections(user_id,character_id,name,corporation_id,scopes,encrypted,expires) VALUES('synthetic-runtime-test',90000002,'Synthetic overview pilot',98000001,'[]','synthetic-invalid-token',0);");
+  await run(['--import', './scripts/sites-env.mjs', './node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'DB', '--local', '--config', config, '--persist-to', persist, '--file', overviewSeed], env);
+  const overviewTool = (await rpc('tools/call', { name: 'character_overview', arguments: { characterId: 90000002 } }, true)).result;
+  check(!overviewTool.isError, 'Owned overview with no grants must return explicit missing permissions');
+  const overviewData = JSON.parse(overviewTool.content[0].text);
+  check(overviewData.view === 'personal' && overviewData.characterId === 90000002 && overviewData.corporationId === undefined && overviewData.sections.length === 6 && overviewData.sections.every(section => section.status === 'needs_permission' && section.metrics.length === 0), 'Character overview must reuse the personal projection without EVE reads or invented totals');
+  check((await rpc('tools/call', { name: 'character_overview', arguments: { characterId: 90000002 } })).result.isError === true, 'Overview must require gateway identity');
+  check((await rpc('tools/call', { name: 'character_overview', arguments: { characterId: 90000003 } }, true)).result.isError === true, 'Overview must reject an unowned character');
+  check((await rpc('tools/call', { name: 'character_overview', arguments: { characterId: 90000002, view: 'corporation' } }, true)).error.code === -32602, 'Overview must reject a caller-supplied corporation view');
   const initialHistory = await history({ operation: 'status' });
   check(initialHistory.settings.enabled === false && initialHistory.report.totals === null, 'Migration must start opted out with unknown totals');
   expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'capture' }), { ...identity, origin }), 409);
@@ -489,7 +499,7 @@ try {
   check(erased.settings.enabled === false && erased.lastCapture === null && erased.report.totals === null, 'Erase must leave no financial report and collection off');
   expectStatus(await post('/api/eve/disconnect', JSON.stringify({ characterId: 90000001 }), { ...identity, origin }), 200);
   expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'status' }), { ...identity, origin }), 404);
-  console.log(`PASS: actual package start; 10 rejected-body request sequences without retries; streamed/oversized requests; overview authorization/cache boundaries; empty synthetic account; MCP manufacturing catalog/requirements; wallet history migrations/encryption/off-by-default/comparison/pause/erase/ownership/batch controls without external data; HTML, ${assetUrls.length} assets and React server components`);
+  console.log(`PASS: actual package start; 10 rejected-body request sequences without retries; streamed/oversized requests; overview authorization/cache boundaries; empty synthetic account; MCP manufacturing catalog/requirements and personal overview; wallet history migrations/encryption/off-by-default/comparison/pause/erase/ownership/batch controls without external data; HTML, ${assetUrls.length} assets and React server components`);
 } catch (error) {
   console.error(`FAIL: ${stage}: ${error instanceof Failure ? error.message : 'validation operation could not complete'}`);
   process.exitCode = 1;

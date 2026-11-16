@@ -1,10 +1,11 @@
 # OptiEVE
 
-A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-one tools through `/mcp`:
+A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-two tools through `/mcp`:
 
 | Tool | Data returned |
 | --- | --- |
 | `connection_status` | Connected characters, granted scopes and setup URLs |
+| `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
 | `read_character_data` | An allowlisted character dataset, with dataset-specific parameters and pagination |
 | `read_corporation_data` | Wallet balances, assets and name/location lookups, order history, contracts and items/bids, industry jobs, blueprints, facilities, structures, mining extractions, freelance jobs, projects and your selected character’s contribution |
@@ -96,6 +97,8 @@ Both views reuse existing asset/industry read grants. Corporation access remains
 The **Industry → Mining ledger** view adds a daily bar chart for one selected material type across the displayed batch. Quantities for different types are never added together. The chart keeps real UTC date spacing, distinguishes reported zero from missing days, and offers an exact-value table. It uses the existing response and optional public labels, with no extra mining request or history store.
 
 These dashboards fetch only on request, hold results in memory, and clear them when selections change or the workspace is left. They reuse granted read permissions; no new scopes, database tables, write operations or credential settings are introduced. Current journal/mining windows and optional queue fields follow the [official ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31); freshness follows [CCP's caching guidance](https://developers.eveonline.com/docs/services/esi/best-practices/).
+
+The `character_overview` chat tool returns the same personal overview as the dashboard for one owned connected character. Ask for a character briefing to get wallet balance, training, market orders, industry, contracts and freelance participation in one response. It requests only the six fixed feeds permitted by the saved read grants, under the existing shared deadline. Missing permissions, denied reads and partial coverage remain explicit; the tool never reconnects, changes scopes, captures history or fetches corporation data. Raw records, names and descriptions are omitted.
 
 The **Overview** workspace shows one selected character at a time. Click **Load overview** to fetch wallet balance, skill queue, personal market orders, industry jobs, contracts and freelance jobs. Each card shows its own coverage and ESI cache information. Refreshes are manual; switching characters, workspaces or pages clears displayed results and cancels the browser request. Results are held in memory, with no account-data history, browser storage, background polling or new database tables.
 
