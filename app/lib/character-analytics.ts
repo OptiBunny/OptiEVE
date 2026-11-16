@@ -32,10 +32,10 @@ function blank<T>(scope: string, status: CharacterAnalyticsStatus, message: stri
 function headerTime(value: unknown): number | null {
   if (typeof value !== 'string' || value.length > 100) return null;
   const iso = overviewDate(value);
-  if (iso !== null) return Date.parse(iso);
+  if (iso !== null && iso.length === 24) return Date.parse(iso);
   const time = Date.parse(value);
   // Date.parse alone normalizes impossible dates and accepts ambiguous input.
-  return Number.isFinite(time) && new Date(time).toUTCString() === value ? time : null;
+  return Number.isFinite(time) && new Date(time).toUTCString() === value && new Date(time).toISOString().length === 24 ? time : null;
 }
 function cacheExpiry(response: Record<string, unknown>, received: number): string | null {
   const expires = headerTime(response.cacheExpires), date = headerTime(response.responseDate);
@@ -54,7 +54,9 @@ function cacheExpiry(response: Record<string, unknown>, received: number): strin
   // An explicit max-age cannot fall back to Expires when its evidence is unusable.
   if (maxAgeDirective && cached === null) return null;
   const until = expires === null ? cached : cached === null ? expires : Math.min(expires, cached);
-  return until === null ? null : new Date(until).toISOString();
+  // Optional cache metadata must stay in the browser DTO's four-digit UTC-year domain.
+  const normalized = until === null ? null : new Date(until).toISOString();
+  return normalized?.length === 24 ? normalized : null;
 }
 async function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();

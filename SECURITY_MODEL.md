@@ -145,6 +145,10 @@ stays unknown. Explicit no-cache/no-store overrides remain stale; valid max-age,
 age, date and Expires evidence retain conservative expiry bounds. Saved-wallet
 capture, blueprint collection/reconciliation and manufacturing workspaces inherit
 the relevant helpers; this changes evidence classification, not reads or storage.
+Optional cache timestamps and last-modified evidence remain within the four-digit
+UTC-year domain accepted by the browser contracts. Unsupported header years and
+computed expiries outside that domain remain unknown instead of invalidating
+otherwise usable datasets. This does not relax validation of required data dates.
 Raw overview/workspace adapters that expose provider headers are separate paths,
 not covered by a claim that every reader uses these helpers. See
 [RFC 9111 section 4.2.1](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.1).
