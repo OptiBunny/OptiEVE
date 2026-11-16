@@ -46,7 +46,7 @@ A capture accepts at most four journal pages and 10,000 events, within one reque
 
 Reports show observed **cash flow, not profit, net worth or a reconstructed balance**. They preserve missing amounts, source freshness and partial page coverage. Missing days are omitted, never filled with zeros; all advertised pages do not establish complete calendar coverage. Exact-decimal totals cannot recover precision already lost in provider JSON numbers. EVE supplies a limited journal window, so this feature cannot reconstruct activity that was never captured. Retention filters expired events from reads; physical cleanup occurs during later history mutations, not on a timer. Reducing retention can delete saved events. Erasure and disconnect do not remove older chat results or external backups.
 
-The additive migration in `drizzle/` must be applied before this Worker version runs. It leaves existing configuration and encrypted authorizations intact, adds a connection lifecycle marker and an initially empty history table. Existing installations remain opted out. Preserve the encryption key during upgrades. See [private retention guidance](PRIVATE_USE.md#retention) and the [security model](SECURITY_MODEL.md#retained-state-and-private-results).
+The additive migration in `drizzle/` must be applied before this Worker version runs. It leaves existing configuration and encrypted authorizations intact, adds a connection lifecycle marker and an initially empty history table. Existing installations remain opted out. Preserve the encryption key during upgrades. See [storage and retention guidance](SECURITY.md#storage-and-retention).
 
 ## Manufacturing planning in chat
 
@@ -62,14 +62,7 @@ Supply the owned blueprint item and page, or explicitly choose a prospective blu
 
 Every assessment has a shared 55-second deadline, checks account ownership and corporation consistency, and rechecks evidence expiry at completion. Depth uses exact-station public orders, effective minimum quantities and explicit own-order exclusions. Ranged bids at other locations are omitted. Regional history is context, not station demand. Incomplete exclusions, insufficient depth, missing costs, or an outdated/unverified recipe catalog keep results conditional. Private results remain in request memory and in the calling chat's normal result history, with no application archive or background refresh.
 
-The public catalog is a derived snapshot of [CCP's official SDE](https://developers.eveonline.com/static-data/tranquility/latest.jsonl), with build, release and content hashes in `app/data/manufacturing-catalog.json` and attribution in the adjacent NOTICE. The runtime only checks the small latest-build manifest; it never downloads or replaces recipes automatically. The explicit refresh workflow stages public data outside development, summarizes semantic changes and provenance-only updates, validates the catalog and arithmetic with a reviewed compiler, and applies through the guarded private-source sync:
-
-```sh
-node scripts/refresh-manufacturing-catalog.mjs --check --validation-dir /path/to/external-installed-validation-copy
-node scripts/refresh-manufacturing-catalog.mjs --apply --validation-dir /path/to/external-installed-validation-copy
-```
-
-The validation copy must contain the current package/lockfile and installed pinned TypeScript runtime, and must be outside both source and private runtime. Optional `--archive` selects an already downloaded official JSONL archive; `--target` selects a different private sibling. Check mode leaves canonical source and private files unchanged. Apply validates before replacing the catalog, then runs public checks and guarded source sync/check. A private conflict after catalog replacement is reported as a partial update; reconcile it before deploying. This command does not install dependencies in development, deploy, publish, create a repository or schedule background updates. Review the diff and complete the normal full build/runtime validation before deploying the refreshed source.
+The public catalog is a derived snapshot of [CCP's official SDE](https://developers.eveonline.com/static-data/tranquility/latest.jsonl), with build, release and content hashes in `app/data/manufacturing-catalog.json` and attribution in the adjacent NOTICE. The runtime only checks the small latest-build manifest; it never downloads or replaces recipes automatically. Catalog changes are reviewed and rebuilt with the application source. Update to a reviewed source version when a newer catalog is needed, and retain its provenance and attribution.
 
 ## Operations overviews
 
@@ -162,7 +155,7 @@ The **Blueprint library** distinguishes originals, copies and stacks of fresh or
 
 Overview monetary sums and price-by-quantity products use exact arithmetic on the decimal representations of received JSON numbers, then round once to cents (half away from zero). If the rounded value cannot be represented faithfully by the numeric response contract, that section is unavailable instead of showing a rounded-up or rounded-down total. Precision lost before the app receives the number cannot be recovered. Active industry jobs with a future start are shown separately from running jobs; missing, invalid or reversed schedules are rejected.
 
-Wallet cash, buy-order commitments, escrow and sell asking values remain distinct. The overview does not calculate profit or net worth, infer completed training from a schedule, or treat a past industry end time as confirmed delivery. No mail, current location or member activity is fetched by these views. All development fixtures use synthetic records; actual grants, roles and deployed authentication still need checking in the private installation.
+Wallet cash, buy-order commitments, escrow and sell asking values remain distinct. The overview does not calculate profit or net worth, infer completed training from a schedule, or treat a past industry end time as confirmed delivery. No mail, current location or member activity is fetched by these views. Actual grants, roles and deployed authentication must be checked in your private installation.
 
 Character access covers finances and inventory, skills and clones, location and ship, industry and planetary colonies, contracts and fittings, mail and calendar, contacts and standings, combat, fleet membership, accessible structures and newer character activities. `connection_status` lists the supported datasets, required parameters and granted scopes. To add newly supported scopes, explicitly choose All read-only access or a custom selection and authorize again; ordinary Reconnect preserves existing supported permissions. Requests fetch data on demand; there is no account-data archive.
 
@@ -198,53 +191,29 @@ The mining ledger shows reported quantities for each UTC date, inventory type an
 
 Research and colony lists also use bounded manual slices, with exact IDs, coverage and freshness. All four views fetch only the selected private dataset. **Show public type and system names** is off by default: selecting it and then loading a view makes one bounded public lookup for type/skill or solar-system IDs derived from the displayed rows. Exact numeric IDs remain visible. Item, container, location, planet, agent and character IDs are never submitted for this enrichment. Failed or incomplete name lookups leave the primary data visible with a separate status. No extra private location query is made. [CCP's blueprint guide](https://support.eveonline.com/hc/en-us/articles/203269951-Blueprints), [datacore guide](https://support.eveonline.com/hc/en-us/articles/203210652-Datacores) and [dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31) explain the underlying fields and mechanics.
 
-## Development
-
-For a private runtime that stays in code parity with development, follow [PRIVATE_USE.md](PRIVATE_USE.md). The local folder convention is `OptiEVE-dev` for development and sibling `OptiEVE` for the private runtime; both source sync and catalog refresh use that default target. Use `--target` for another private location. Runtime credentials and account state belong in that separate directory or its private hosting environment, never in the public GitHub repository also named `OptiEVE`.
+## Build and run
 
 The runtime is Vinext/React on Cloudflare Workers, with Cloudflare D1 storage and Sites hosting integration. It is not a standalone Next.js server.
 
-Use Node.js **22.13.0 or newer** and **pnpm 11.25.0**. Install the locked dependencies from the project directory:
+Use Node.js **22.13.0 or newer** and **pnpm 11.25.0**. Install the locked dependencies from the project directory, including the build dependencies:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-The portable development preview normally uses `http://localhost:5173`. Its loopback-only mock sign-in is for local UI development. Running it does not establish an EVE connection or production authentication.
+The portable preview normally uses `http://localhost:5173`. Its loopback-only mock sign-in supports local UI preview; it does not establish an EVE connection or production authentication. The optional connected-app preview bridge requires HTTP and a fixed port. It supports IPv4/IPv6 loopback and wildcard listeners while keeping bridge requests on loopback. HTTPS and remote-only listener settings fail explicitly; hosted connections use their separate runtime binding.
 
-The optional connected-app preview bridge requires HTTP and a fixed port. It supports IPv4/IPv6 loopback and wildcard listeners, keeping bridge requests on loopback. HTTPS and remote-only listener settings fail explicitly during preview configuration; hosted production connections use their separate runtime binding.
-
-Run the source checks and build with:
+Build the application and run the built Worker locally with:
 
 ```sh
-pnpm check:public
-pnpm test:public
-pnpm exec tsc --noEmit
-pnpm test:security
 pnpm build
-pnpm test:runtime
+pnpm start
 ```
 
-The public-source check rejects private data/export files, archives, unreviewed binary content, links and junctions, deployment bindings, personal machine paths and several credential formats. It is a guard against common mistakes; review new content and run a credential scanner as well.
+A production build writes `dist/server/wrangler.json`. The start command uses local Wrangler on loopback; it is not a production authentication gateway. Building or starting locally does not publish the application, apply hosted migrations or authorize EVE access. Follow the separate deployment instructions below for a private hosted installation.
 
-To create a source package for sharing, install Git and run:
-
-```sh
-pnpm package:public
-```
-
-This writes `outputs/public-release/OptiEVE-public-source.zip` and its SHA256 checksum. It captures the current checked source, including uncommitted edits and deletions, then verifies every ZIP entry against those exact bytes. It does not export older committed content or copy Git history. Git attributes cannot silently remove or rewrite files in this package. The command does not commit changes or create a remote repository.
-
-Share this source ZIP rather than a ZIP of the entire working directory. Local dependencies, package caches, preview mailboxes and generated builds can contain machine paths, runtime data or framework-generated secrets; they are excluded from the package. Ignored files are outside the public-source selection. The independent Git history and actual outgoing ZIP still need credential/privacy review before publishing a repository or release.
-
-The `test:public` regression suite checks the export boundaries with synthetic fixtures in temporary directories. It covers stale Git content, links, private artifacts, environment examples and archive integrity.
-
-The security suite uses generated test credentials, mocked EVE responses and an in-memory SQLite database. It checks encryption, user isolation, OAuth state, JWT validation, refresh rotation, permission handling, protocol validation, request byte limits and connection-page recovery. It includes races between sign-in completion and disconnect. It does not verify a deployed authentication gateway or real EVE permissions.
-
-The runtime regression runs the built worker through the same local Wrangler command as `pnpm start`, using temporary storage and synthetic identities. It checks repeated rejected POST requests followed by healthy API, MCP, HTML, asset and RSC responses. Run it in a temporary installed validation copy; it refuses private runtimes. The API drains unread rejected request bodies without buffering or logging them to avoid the Windows connection failure described in [workers-sdk #15203](https://github.com/cloudflare/workers-sdk/issues/15203).
-
-The `install:ci` script is intended for the managed Linux/Sites environment and depends on shell utilities. Use the commands above for a portable checkout. A production build writes `dist/server/wrangler.json`; building alone does not publish the application.
+The `install:ci` command supports the managed Linux/Sites environment and requires its shell utilities. Use the portable installation command above for an ordinary checkout. Keep the pinned dependency versions, lockfile and build configuration together when updating the source. Never distribute your installed directory, environment files, authorization database, logs or generated runtime state.
 
 ## Set up a separate deployment
 

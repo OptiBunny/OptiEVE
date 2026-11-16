@@ -73,7 +73,7 @@ function money(value: unknown): string | null {
 type Source = { entity: string; dataset: string; page: number | null; retrievedAt: string; cacheExpires: string | null; freshness: 'fresh' | 'stale' | 'unknown' };
 export function manufacturingExpiryTime(value: unknown): number | null {
   if (typeof value !== 'string' || value.length > 100) return null;
-  const parsed = Date.parse(value); if (!Number.isFinite(parsed)) return null;
+  const parsed = Date.parse(value); if (!Number.isFinite(parsed) || new Date(parsed).toISOString().length !== 24) return null;
   const iso = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/.exec(value);
   // Date.parse normalizes impossible dates. Accept only exact ISO/HTTP dates
   // emitted by our adapters and provider headers, never their normalized form.
@@ -90,7 +90,8 @@ export function manufacturingPrivateExpiry(value: Record<string, unknown>, recei
   let expiry = expires === null ? cached : cached === null ? expires : Math.min(expires, cached);
   if (/(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(control)) expiry = received;
   else if (maxAgeDirective && cached === null) expiry = null;
-  return expiry === null ? null : new Date(expiry).toISOString();
+  const normalized = expiry === null ? null : new Date(expiry).toISOString();
+  return normalized?.length === 24 ? normalized : null;
 }
 export function manufacturingSourceFreshness(sources: unknown, at: number): 'fresh' | 'stale' | 'unknown' {
   if (!Array.isArray(sources) || sources.length === 0) return 'unknown';

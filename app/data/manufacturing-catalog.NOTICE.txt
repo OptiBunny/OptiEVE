@@ -10,8 +10,9 @@ https://developers.eveonline.com/docs/services/static-data/
 https://developers.eveonline.com/static-data/
 
 The exact build, release date, official archive URL, archive SHA256 and selected
-source-file SHA256 values are recorded inside the JSON. Refresh using the
-repository's update-manufacturing-catalog script, review the result, and rebuild.
+source-file SHA256 values are recorded inside the JSON. The pinned source is
+reviewed and rebuilt in development before distribution. Preserve its provenance
+and this notice when updating to a reviewed application source version.
 Runtime calls may check the official latest-build manifest; they never replace
 the pinned catalog or download the complete SDE automatically.
 

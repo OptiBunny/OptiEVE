@@ -63,7 +63,7 @@ function headerTime(value: unknown): number | null {
   if (stamp) return Date.parse(stamp);
   if (typeof value !== 'string' || value.length > 100) return null;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toUTCString() === value ? parsed : null;
+  return Number.isFinite(parsed) && new Date(parsed).toUTCString() === value && new Date(parsed).toISOString().length === 24 ? parsed : null;
 }
 function expiry(result: Record<string, unknown>, received: number): string | null {
   const expires = headerTime(result.cacheExpires), date = headerTime(result.responseDate);
@@ -78,7 +78,9 @@ function expiry(result: Record<string, unknown>, received: number): string | nul
   // An explicit max-age cannot fall back to Expires when its evidence is unusable.
   if (maxAgeDirective && cached === null) return null;
   const until = expires === null ? cached : cached === null ? expires : Math.min(expires, cached);
-  return until === null ? null : new Date(until).toISOString();
+  // Optional cache metadata must stay in the browser DTO's four-digit UTC-year domain.
+  const normalized = until === null ? null : new Date(until).toISOString();
+  return normalized?.length === 24 ? normalized : null;
 }
 async function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();

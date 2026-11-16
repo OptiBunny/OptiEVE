@@ -51,7 +51,7 @@ function decimal(v: unknown): string {
 }
 function headerDate(value: string | null): number | null {
   if (!value || value.length > 100) return null;
-  const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : null;
+  const parsed = Date.parse(value); return Number.isFinite(parsed) && new Date(parsed).toISOString().length === 24 ? parsed : null;
 }
 function sourceHeaders(url: string, headers: Headers, now: number): ManufacturingPublicSource {
   const expiry = headerDate(headers.get('expires')), date = headerDate(headers.get('date'));
@@ -65,7 +65,8 @@ function sourceHeaders(url: string, headers: Headers, now: number): Manufacturin
   if (cleanControl && /(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(cleanControl)) finalExpiry = now;
   else if (control !== null && (control.length > 256 || /[\x00-\x1f\x7f]/.test(control)) || maxAgeDirective && cacheExpiry === null) finalExpiry = null;
   const modified = headerDate(headers.get('last-modified'));
-  return { url, retrievedAt: new Date(now).toISOString(), cacheExpires: finalExpiry === null ? null : new Date(finalExpiry).toISOString(), lastModified: modified === null ? null : new Date(modified).toISOString(), cacheControl: cleanControl };
+  const normalizedExpiry = finalExpiry === null ? null : new Date(finalExpiry).toISOString();
+  return { url, retrievedAt: new Date(now).toISOString(), cacheExpires: normalizedExpiry?.length === 24 ? normalizedExpiry : null, lastModified: modified === null ? null : new Date(modified).toISOString(), cacheControl: cleanControl };
 }
 function freshness(sources: ManufacturingPublicSource[], now: number): 'fresh' | 'stale' | 'unknown' {
   return sources.some(source => source.cacheExpires !== null && Date.parse(source.cacheExpires) <= now) ? 'stale' : sources.some(source => source.cacheExpires === null) ? 'unknown' : 'fresh';

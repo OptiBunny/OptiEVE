@@ -91,7 +91,7 @@ export function searchManufacturingItems(input: unknown) {
 
 type StatusDependencies = { fetch?: typeof fetch; now?: () => number };
 function catalogExpiry(headers: Headers, now: number): string | null {
-  const headerDate = (value: string | null) => value && value.length <= 100 && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+  const headerDate = (value: string | null) => value && value.length <= 100 && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().length === 24 ? Date.parse(value) : null;
   const expires = headerDate(headers.get('expires')), date = headerDate(headers.get('date'));
   const rawControl = headers.get('cache-control'), control = rawControl && rawControl.length <= 256 && !/[\x00-\x1f\x7f]/.test(rawControl) ? rawControl : null;
   if (rawControl !== null && (rawControl.length > 256 || /[\x00-\x1f\x7f]/.test(rawControl))) return null;
@@ -102,7 +102,8 @@ function catalogExpiry(headers: Headers, now: number): string | null {
   let expiry = expires === null ? maxAgeExpiry : maxAgeExpiry === null ? expires : Math.min(expires, maxAgeExpiry);
   if (control && /(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(control)) expiry = now;
   else if (maxAgeDirective && maxAgeExpiry === null) expiry = null;
-  return expiry === null ? null : new Date(expiry).toISOString();
+  const normalized = expiry === null ? null : new Date(expiry).toISOString();
+  return normalized?.length === 24 ? normalized : null;
 }
 export function createManufacturingCatalogStatusReader(dependencies: StatusDependencies = {}) {
   return async function read(options: { signal?: AbortSignal } = {}) {
