@@ -8,6 +8,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `character_clone_report` | Separate active-implant and stored-clone evidence, full received counts and bounded previews without clone names or locations |
+| `character_fittings_report` | Saved-plan and item-presence counts with bounded public type groups, omitting private fitting names and identities |
 | `character_freelance_report` | One character’s returned freelance participation list, bounded job previews and optional explicitly selected own participation |
 | `character_calendar_report` | One calendar-summary batch with response and date-window counts, a bounded UTC schedule and explicit continuation evidence |
 | `wallet_activity_report` | One journal page’s cash-flow totals and categories, with the latest thirty returned UTC dates and explicit omissions |
@@ -42,7 +43,17 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 ## Workspace navigation
 
-The seventeen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+The eighteen workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+
+## Saved fittings
+
+**Character → Saved fittings** reads one selected character’s saved fitting plans when you click Load. The saved `esi-fittings.read_fittings.v1` grant is required; this view never requests fitting write access. Plans are not owned ships, available inventory or proof that a fit is valid. Missing or denied results remain unknown, while an accepted empty response has zero plans.
+
+Hull charts show saved-plan counts by ship or structure type. Item charts show how many plans mention each type, counting a type once per plan even when its rows repeat. These item-presence counts overlap and must not be added as a total number of plans. Charts show the top twenty groups with explicit omissions; filters and 100-row table pages keep all returned groups and plans accessible. Names and exact type IDs can be searched locally. Selecting a plan shows its reported item rows, flags and signed quantities, with record counts by flag group. Repeated records and the literal `Invalid` flag remain reported evidence; they do not establish slot occupancy, fit validity or available capacity. Quantities of unlike items are never added.
+
+All filters, chart selections and plan inspection use the accepted response without further requests. Refresh or changing the character clears the selected plan and local controls. Names are displayed as plain bounded text; unsafe names are redacted explicitly. Descriptions and persistent fitting IDs are omitted from the dashboard response. Public type labels come from the pinned catalog, with exact type-ID fallback and no network lookup. The view accepts at most 1,000 plans, 256 item records per plan and 10,000 item records overall, plus independent response-byte limits; overflow is reported rather than silently truncating counts.
+
+In the private chat, `character_fittings_report` returns those aggregate counts, flag-group record counts and at most twenty hull and item-presence groups with total/shown/omitted counts. It accepts only an owned `characterId` and omits fitting names, descriptions, identities, plan previews and raw item rows. This endpoint supplies no per-plan dates, so no history or trend is inferred from cache freshness. The feature does not calculate skill readiness, damage, defense, price or profitability, import/export fits, retain results, expand grants or write to EVE. [CCP’s dated fittings schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31) documents the returned fields.
 
 ## Saved wallet history and reports
 
