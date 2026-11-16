@@ -13,11 +13,11 @@ const invalid = (): never => { throw new OrderDataError(); };
 const limitations = [
   'Only this returned response is included. Corporation orders use one explicit page; each load replaces the previous results. No account or order history is saved.',
   'The personal view excludes orders explicitly marked as corporation orders. ESI omits optional boolean flags when false, so an omitted buy-order flag means Sell on these character/corporation endpoints.',
-  'Charts count orders, not item quantities or ISK. Remaining and original quantities are shown separately per order; their difference is not established sales or fills.',
+  'Count charts measure orders, not mixed-item quantities. Remaining and original quantities are shown per order; their difference is not established sales or fills. Derived quoted values multiply received unit price by remaining units, separately for buy bids and sell asks.',
   'Reported expiry is issued time plus duration in days, normalized to UTC. A past expiry can reflect delayed data and does not prove cancellation, disappearance or completion. Dates are a snapshot, not a live countdown.',
-  'Unit prices show the decimal representation of the received JSON number without further rounding. This cannot recover precision already lost before or during JSON parsing. No portfolio value, escrow total, notional, profit or wallet balance is calculated.',
+  'Unit prices show the decimal representation of the received JSON number without further rounding. This cannot recover precision already lost before or during JSON parsing. Derived quoted values use exact decimal products and sums without cent rounding; they are not portfolio value, escrow, proceeds, profit, wallet balance or guaranteed fills.',
   'Public item names come from the pinned catalog; unmapped types retain their IDs. Issuer, location, wallet-division, escrow, private names and raw source URLs are omitted; no extra lookups are performed.',
-  'The application rejects responses above 5,000 order rows, unsafe quantities, duplicate IDs or inconsistent metadata rather than silently truncating charts. Filters affect the table only; charts describe the full included response.',
+  'The application rejects responses above 5,000 order rows, unsafe quantities, duplicate IDs or inconsistent metadata rather than silently truncating charts. Local filters affect order rows only; full-response charts retain their original scope. The expiry calendar covers future dates within thirty rolling days at load time; other dates remain accessible in the order table.',
 ];
 export function validateOrderAnalyticsArgs(value: unknown): Selection {
   if (!record(value) || Reflect.ownKeys(value).some(key => typeof key !== 'string' || !['characterId', 'entity', 'page'].includes(key)) ||
