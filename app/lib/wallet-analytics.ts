@@ -202,3 +202,13 @@ export function createWalletAnalyticsReader(dependencies: Dependencies) {
   };
 }
 export const readWalletAnalytics = createWalletAnalyticsReader({ connections: listConnections, journal: readEve });
+
+// Shared cash-flow semantics for the optional private history service. The
+// existing on-demand reader continues to hold no persistent journal data.
+export {
+  category as walletActivityCategory, categoryLabels as walletActivityCategoryLabels,
+  decimal as walletActivityDecimal, formatted as walletActivityFormat,
+  project as walletActivityProject, bucket as walletActivityBucket,
+  accumulate as accumulateWalletActivity, iso as walletActivityDate,
+  expiry as walletActivityExpiry, precisionPolicy as walletActivityPrecisionPolicy,
+};

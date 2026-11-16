@@ -14,6 +14,7 @@ const apiCode = source('app/api/eve/[...path]/route.ts');
 const manufacturingSources = new Map();
 const manufacturingData = JSON.parse(readFileSync('app/data/manufacturing-catalog.json', 'utf8'));
 const manufacturingNames = ['manufacturing_compare', 'manufacturing_plan', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing'];
+const historyNames = ['wallet_history_status', 'wallet_history_report', 'configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'];
 const origin = 'https://example.chatgpt.site';
 
 function harness(options = {}) {
@@ -21,6 +22,7 @@ function harness(options = {}) {
   const workspaceCalls = [];
   const characterWorkspaceCalls = [];
   const manufacturingCalls = [];
+  const historyCalls = [];
   const execute = (code, require = () => { throw new Error('Unexpected import'); }) => {
     const fixtureModule = { exports: {} };
     vm.runInNewContext(code, {
@@ -89,6 +91,8 @@ function harness(options = {}) {
     }
     return manufacturingModules.get(name);
   }
+  const validateHistoryArgs = execute(source('app/lib/wallet-history.ts'), name => name === './eve' ? backend : {}).validateWalletHistoryArgs;
+  const historyBackend = { runWalletHistory: async (user, args, context) => { validateHistoryArgs(args); historyCalls.push({ user, args, signal: context.signal }); if (options.historyError) throw new Error('OMIT_PRIVATE_HISTORY'); return { characterId: args.characterId, operation: args.operation, synthetic: true }; } };
   let bodyModule;
   const require = name => {
     if (name.endsWith('/blueprint-reconciliation-stream')) return execute(source('app/lib/blueprint-reconciliation-stream.ts'), dependency => {
@@ -125,6 +129,8 @@ function harness(options = {}) {
       };
       throw new Error('Unexpected collection stream import: ' + dependency);
     });
+    if (name.endsWith('/wallet-history-tools')) return execute(source('app/lib/wallet-history-tools.ts'), dependency => { if (dependency === './eve') return backend; if (dependency === './wallet-history') return historyBackend; throw new Error('Unexpected history import'); });
+    if (name.endsWith('/wallet-history')) return historyBackend;
     if (name.endsWith('/manufacturing-tools')) return manufacturingRequire('./manufacturing-tools');
     if (name.endsWith('/eve')) return backend;
     if (name.endsWith('/character-data')) return catalog;
@@ -151,7 +157,7 @@ function harness(options = {}) {
     if (name.endsWith('/request-body')) return bodyModule ??= execute(source('app/lib/request-body.ts'));
     throw new Error('Unexpected import');
   };
-  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls };
+  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls };
 }
 
 function request(value, options = {}) {
@@ -178,8 +184,8 @@ test('Sites discovery retains existing tools and exposes the optional corporatio
   assert.deepEqual(discovery.result.capabilities, { tools: {} });
   assert.equal(discovery.result.serverInfo.name, 'OptiEVE');
   const listing = await (await mcp.POST(request(rpc('tools/list')))).json();
-  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames]);
-  assert(listing.result.tools.every(item => item.annotations.readOnlyHint && !item.annotations.destructiveHint));
+  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
+  assert(listing.result.tools.filter(item => !historyNames.includes(item.name)).every(item => item.annotations.readOnlyHint && !item.annotations.destructiveHint));
 });
 
 test('corporation tool validates its dataset options before calling any reader', async () => {
@@ -972,4 +978,128 @@ test('aborting the originating reconciliation request prevents a late result', a
   const response = await api.POST(incoming); controller.abort();
   const raw = await response.text();
   assert(capturedSignal.aborted); assert.doesNotMatch(raw, /"type":"result"/);
+});
+
+
+const historyInputs = () => ({
+  wallet_history_status: { characterId: 90000001 },
+  wallet_history_report: { characterId: 90000001, days: 90 },
+  configure_wallet_history: { characterId: 90000001, enabled: true, retentionDays: 30 },
+  capture_wallet_history: { characterId: 90000001 },
+  clear_wallet_history: { characterId: 90000001, confirm: 'delete_wallet_history' },
+});
+
+test('history tools honestly distinguish local storage writes from report reads', async () => {
+  const h = harness(), listed = (await (await h.mcp.POST(request(rpc('tools/list')))).json()).result.tools;
+  for (const name of historyNames) {
+    const item = listed.find(row => row.name === name), readonly = ['wallet_history_status', 'wallet_history_report'].includes(name);
+    assert.equal(item.annotations.readOnlyHint, readonly);
+    assert.equal(item.annotations.destructiveHint, !readonly);
+    assert.equal(item.annotations.idempotentHint, name !== 'capture_wallet_history');
+    assert.equal(item.annotations.openWorldHint, name === 'capture_wallet_history');
+    assert.equal(item.inputSchema.additionalProperties, false);
+  }
+});
+
+test('all history tools bind gateway identity and signal to the shared service', async () => {
+  const operations = ['status', 'report', 'configure', 'capture', 'clear'];
+  const h = harness();
+  for (const [index, [name, args]] of Object.entries(historyInputs()).entries()) {
+    const incoming = request(tool(name, args));
+    const result = (await (await h.mcp.POST(incoming)).json()).result;
+    assert.equal(result.isError, undefined);
+    assert.equal(h.historyCalls[index].user, 'synthetic-user');
+    assert.equal(h.historyCalls[index].signal, incoming.signal);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.historyCalls[index].args)), { ...args, operation: operations[index] });
+    const denied = request(tool(name, args)); denied.headers.delete('oai-authenticated-user-id');
+    assert.equal((await (await h.mcp.POST(denied)).json()).result.isError, true);
+    assert.equal(h.historyCalls.length, index + 1);
+  }
+});
+
+test('history schemas reject unrequested settings, unsafe retention and missing erase confirmation before service calls', async () => {
+  const h = harness();
+  for (const [name, args] of [
+    ['wallet_history_status', { characterId: 1, userId: 'another-owner' }],
+    ['wallet_history_report', { characterId: 1, days: 366 }],
+    ['wallet_history_report', { characterId: 1, entity: 'corporation' }],
+    ['configure_wallet_history', { characterId: 1, enabled: 'true', retentionDays: 30 }],
+    ['configure_wallet_history', { characterId: 1, enabled: true }],
+    ['configure_wallet_history', { characterId: 1, enabled: true, retentionDays: 0 }],
+    ['capture_wallet_history', { characterId: 1, operation: 'configure' }],
+    ['capture_wallet_history', { characterId: 1, enabled: true }],
+    ['clear_wallet_history', { characterId: 1 }],
+    ['clear_wallet_history', { characterId: 1, confirm: true }],
+  ]) await rpcError(await h.mcp.POST(request(tool(name, args))), -32602, 1);
+  assert.equal(h.historyCalls.length, 0);
+});
+
+test('MCP notifications cannot enable, capture or erase history', async () => {
+  const h = harness();
+  for (const [name, args] of Object.entries(historyInputs())) {
+    const notification = tool(name, args); delete notification.id;
+    const result = await h.mcp.POST(request(notification));
+    assert.equal(result.status, 202);
+  }
+  assert.equal(h.historyCalls.length, 0);
+});
+
+test('history API keeps origin, authentication and body limits ahead of mutations', async () => {
+  const body = { characterId: 90000001, operation: 'capture' }, path = '/api/eve/wallet-history';
+  const h = harness(), incoming = request(body, { path });
+  const result = await h.api.POST(incoming);
+  assert.equal(result.status, 200); assert.equal(h.historyCalls[0].user, 'synthetic-user');
+  assert.equal(h.historyCalls[0].signal, incoming.signal);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.historyCalls[0].args)), body);
+  for (const [header, status] of [['origin', 403], ['oai-authenticated-user-id', 401]]) {
+    const rejected = request(body, { path }); rejected.headers.delete(header);
+    assert.equal((await h.api.POST(rejected)).status, status);
+  }
+  assert.equal((await h.api.POST(request(' '.repeat(4097), { path }))).status, 413);
+  assert.equal(h.historyCalls.length, 1);
+  assert.match(result.headers.get('cache-control'), /no-store/);
+});
+
+test('history service errors do not leak storage details through either transport', async () => {
+  const h = harness({ historyError: true });
+  const mcp = await (await h.mcp.POST(request(tool('wallet_history_report', { characterId: 1 })))).text();
+  assert(!mcp.includes('OMIT_PRIVATE_HISTORY')); assert.match(mcp, /isError/);
+  const api = await h.api.POST(request({ characterId: 1, operation: 'report' }, { path: '/api/eve/wallet-history' }));
+  assert.equal(api.status, 500); assert(!(await api.text()).includes('OMIT_PRIVATE_HISTORY'));
+});
+
+
+test('legacy batches reject history changes before any mutation executes', async () => {
+  const h = harness(), inputs = historyInputs();
+  const names = ['configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'];
+  const values = await (await h.mcp.POST(request(names.map((name, index) => tool(name, inputs[name], index + 1))))).json();
+  assert.deepEqual(values.map(value => value.id), [1, 2, 3]);
+  for (const value of values) {
+    assert.equal(value.error.code, -32600);
+    assert.equal(value.error.message, 'Wallet history changes must be sent as a single request.');
+  }
+  assert.equal(h.historyCalls.length, 0);
+});
+
+test('a nearly full batch cannot commit a history change then report it as unfinished', async () => {
+  const h = harness({ statusResult: { synthetic: 'x'.repeat(4 * 1024 * 1024 - 1000) } });
+  const values = await (await h.mcp.POST(request([
+    tool('connection_status', {}, 1),
+    tool('clear_wallet_history', historyInputs().clear_wallet_history, 2),
+  ]))).json();
+  assert.equal(values[0].result.content[0].type, 'text');
+  assert.equal(values[1].error.code, -32600);
+  assert.equal(values[1].error.message, 'Wallet history changes must be sent as a single request.');
+  assert.equal(h.historyCalls.length, 0);
+  assert(Buffer.byteLength(JSON.stringify(values)) <= 4 * 1024 * 1024);
+});
+
+test('legacy batches still permit saved history status and reports', async () => {
+  const h = harness(), inputs = historyInputs();
+  const values = await (await h.mcp.POST(request([
+    tool('wallet_history_status', inputs.wallet_history_status, 1),
+    tool('wallet_history_report', inputs.wallet_history_report, 2),
+  ]))).json();
+  assert(values.every(value => value.result?.content[0]?.type === 'text' && !value.result.isError));
+  assert.deepEqual(h.historyCalls.map(call => call.args.operation), ['status', 'report']);
 });

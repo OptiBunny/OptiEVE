@@ -61,7 +61,7 @@ These documents describe requirements and reviewed controls, not proof of safety
 
 - Keep only configuration and connection state needed for the authorized EVE features: private origin/hosting/database settings, the token-encryption key, EVE Client ID, encrypted tokens, necessary character/user/scope/expiry metadata and short-lived OAuth state.
 - Never request or store the EVE password. This implementation does not require a client secret.
-- Do not add persistent orders, assets, wallet histories, trading exports, screenshots, personal notes or raw request/response logs unless separately requested. Fetch account data on demand. Avoid displaying secrets in tool output or chat.
+- Do not add persistent orders, assets, trading exports, screenshots, personal notes or raw request/response logs unless separately requested. Optional character-wallet history is an explicitly requested feature: keep it disabled by default, manually captured, bounded and private. Never enable collection as a side effect of a report request. Fetch other account data on demand. Avoid displaying secrets in tool output or chat.
 - Keep the private deployment behind its trusted authentication gateway. Local mock sign-in is only a development preview, not production authentication. Follow README.md and PRIVATE_USE.md for setup limits.
 
 ## Public distribution

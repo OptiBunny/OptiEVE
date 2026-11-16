@@ -1,6 +1,6 @@
 # OptiEVE
 
-A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes sixteen tools through `/mcp`:
+A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-one tools through `/mcp`:
 
 | Tool | Data returned |
 | --- | --- |
@@ -20,8 +20,25 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `assess_manufacturing` | Owner-scoped stock, blueprint, skills, funding, market depth and conditional economics |
 | `manufacturing_compare` | Up to five alternatives under one context and completion-time freshness check |
 | `manufacturing_plan` | Combined production and shopping plan with shared stock, wallet, copy runs and depth |
+| `wallet_history_status` | Private character-wallet history settings and saved coverage |
+| `wallet_history_report` | Saved cash-flow totals, daily series and categories |
+| `configure_wallet_history` | Explicit opt-in, pause and retention settings in the private app |
+| `capture_wallet_history` | Explicit manual capture into already enabled private history |
+| `clear_wallet_history` | Explicit erasure of saved financial history and disablement |
 
 The application cannot place orders, change prices, move assets or spend ISK. Corporation reads require the appropriate scopes and character roles.
+
+## Saved wallet history and reports
+
+The Wallet activity tab includes **Saved wallet history** for one connected character. It is off by default. Load its status, explicitly enable it with a retention choice of 30, 90 or 365 days, then choose **Capture** when you want to save the currently available journal window. There is no background collector. Pausing stops new captures; erasing clears saved financial data and disables collection. Disconnecting the character also removes its application history. Corporation wallets continue to use the existing on-demand views; corporation history is not collected.
+
+The dashboard and five wallet-history chat tools use the same service. In the private-use chat, ask to check history settings, enable a chosen retention period, capture the journal, or report incoming/outgoing ISK by day and category. Enable, capture and erase are application-storage changes and have write annotations; they never write to EVE. A report request does not implicitly enable or collect history. Tool results themselves may remain in the calling chat.
+
+A capture accepts at most four journal pages and 10,000 events, within one request deadline. Repeated events are deduplicated and conflicting records fail safely. Saved history is bounded to 10,000 events and one MiB of plaintext before encryption; a full store rejects new captures instead of silently discarding unexpired records. Only IDs needed for deduplication, UTC event times, reported amounts and fixed categories are retained, with bounded capture evidence. Descriptions, counterparties, reasons, balance fields and raw responses are excluded. History is encrypted in the private D1 database with the existing token key and a separate user/character binding.
+
+Reports show observed **cash flow, not profit, net worth or a reconstructed balance**. They preserve missing amounts, source freshness and partial page coverage. Missing days are omitted, never filled with zeros; all advertised pages do not establish complete calendar coverage. Exact-decimal totals cannot recover precision already lost in provider JSON numbers. EVE supplies a limited journal window, so this feature cannot reconstruct activity that was never captured. Retention filters expired events from reads; physical cleanup occurs during later history mutations, not on a timer. Reducing retention can delete saved events. Erasure and disconnect do not remove older chat results or external backups.
+
+The additive migration in `drizzle/` must be applied before this Worker version runs. It leaves existing configuration and encrypted authorizations intact, adds a connection lifecycle marker and an initially empty history table. Existing installations remain opted out. Preserve the encryption key during upgrades. See [private retention guidance](PRIVATE_USE.md#retention) and the [security model](SECURITY_MODEL.md#retained-state-and-private-results).
 
 ## Manufacturing planning in chat
 

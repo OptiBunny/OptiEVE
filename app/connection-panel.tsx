@@ -8,6 +8,7 @@ import ManufacturingPanel from './manufacturing-panel';
 import CharacterAnalyticsPanel from './character-analytics-panel';
 import CloneAnalyticsPanel from './clone-analytics-panel';
 import WalletAnalyticsPanel from './wallet-analytics-panel';
+import WalletHistoryPanel from './wallet-history-panel';
 import InventoryAnalyticsPanel from './inventory-analytics-panel';
 import IndustryAnalyticsPanel from './industry-analytics-panel';
 import OrderAnalyticsPanel from './order-analytics-panel';
@@ -62,7 +63,7 @@ export default function ConnectionPanel(){
   {tab==='blueprints'&&status&&!statusLoading&&<BlueprintAnalyticsPanel key={'blueprints-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='inventory'&&status&&!statusLoading&&<InventoryAnalyticsPanel key={'inventory-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='jobs'&&status&&!statusLoading&&<IndustryAnalyticsPanel key={'jobs-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='wallet'&&status&&!statusLoading&&<WalletAnalyticsPanel key={'wallet-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
+  {tab==='wallet'&&status&&!statusLoading&&<div key={'wallet-'+JSON.stringify(status.characters)}><WalletAnalyticsPanel characters={status.characters} openConnections={()=>setTab('connections')}/><WalletHistoryPanel characters={status.characters} openConnections={()=>setTab('connections')}/></div>}
   {tab==='overview'&&status&&!statusLoading&&<OverviewPanel key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='corporation'&&status&&!statusLoading&&<CorporationPanel key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
   {tab==='reputation'&&status&&!statusLoading&&<CharacterPanel key={'reputation-'+JSON.stringify(status.characters)} mode="reputation" characters={status.characters} openConnections={()=>setTab('connections')}/>}
