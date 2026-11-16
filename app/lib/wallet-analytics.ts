@@ -21,7 +21,7 @@ const limitations = [
   'Only the selected journal page and wallet are included. EVE retains a limited journal window; these are not lifetime totals or a complete calendar period.',
   'Positive amounts are incoming and negative amounts are outgoing. Net activity is cash flow, not profit or a reconstructed wallet balance. Transfers remain activity in the selected wallet.',
   'Only journal amount fields are summed. Separate tax fields, balances and wallet transaction values are never added, avoiding duplicate accounting.',
-  'Days without returned entries are omitted, not filled with zero. Missing amounts are excluded and counted explicitly. Category labels group selected known reference types; other types remain Other activity.',
+  'Days and date/category intersections without returned entries are omitted, not filled with zero. Missing amounts are excluded and counted explicitly. Category labels group selected known reference types; other types remain Other activity.',
   'Each page is loaded independently and replaces the previous chart. Pages can change between requests and are never combined or persisted. The application accepts at most 2,500 rows per response.',
 ];
 const categoryLabels: Record<WalletActivityCategoryId, string> = {
@@ -130,7 +130,7 @@ function blank(selected: Selection, at: number, status: WalletAnalytics['status'
     generatedAt: new Date(at).toISOString(), status, message, scope: scopes[selected.entity],
     coverage: { kind: 'unavailable', page: selected.page, pages: null, nextPage: null, previousPage: selected.page > 1 ? selected.page - 1 : null, pageLimitReached: false, entries: 0, amountEntries: 0, missingAmountEntries: 0, earliest: null, latest: null },
     freshness: { state: 'unknown', retrievedAt: null, cacheExpires: null, lastModified: null },
-    totals: null, daily: [], categories: [], precisionPolicy, limitations: [...limitations],
+    totals: null, daily: [], categories: [], categoryDaily: [], precisionPolicy, limitations: [...limitations],
   };
 }
 
@@ -146,7 +146,7 @@ function summarize(selected: Selection, result: unknown, completed: number): Wal
   const nextPage = more === true && selected.page < 500 ? selected.page + 1 : null;
   if (result.nextPage !== nextPage || result.pageLimit !== undefined && result.pageLimit !== 500 || result.morePagesAvailable !== undefined && result.morePagesAvailable !== more ||
       result.pageLimitReached !== undefined && result.pageLimitReached !== (selected.page === 500 && more !== false)) return badData();
-  const total = bucket(), daily = new Map<string, Bucket>(), categories = new Map<WalletActivityCategoryId, Bucket>(), ids = new Set<number>();
+  const total = bucket(), daily = new Map<string, Bucket>(), categories = new Map<WalletActivityCategoryId, Bucket>(), categoryDaily = new Map<string, Map<WalletActivityCategoryId, Bucket>>(), ids = new Set<number>();
   let earliest: string | null = null, latest: string | null = null;
   for (const row of result.data) {
     if (!record(row) || !integer(row.id) || ids.has(row.id) || typeof row.ref_type !== 'string' || !/^[a-z][a-z0-9_]{0,99}$/.test(row.ref_type)) return badData();
@@ -159,7 +159,11 @@ function summarize(selected: Selection, result: unknown, completed: number): Wal
     const day = date.slice(0, 10), group = category(row.ref_type);
     if (!daily.has(day)) daily.set(day, bucket());
     if (!categories.has(group)) categories.set(group, bucket());
+    if (!categoryDaily.has(day)) categoryDaily.set(day, new Map());
+    const intersections = categoryDaily.get(day)!;
+    if (!intersections.has(group)) intersections.set(group, bucket());
     accumulate(total, amount); accumulate(daily.get(day)!, amount); accumulate(categories.get(group)!, amount);
+    accumulate(intersections.get(group)!, amount);
   }
   const summary = project(total), cacheExpires = expiry(result, Date.parse(retrievedAt));
   const freshness: WalletAnalytics['freshness'] = {
@@ -180,6 +184,11 @@ function summarize(selected: Selection, result: unknown, completed: number): Wal
     freshness, totals: summary.totals,
     daily: [...daily].sort(([left], [right]) => left.localeCompare(right)).map(([date, value]) => ({ date, ...project(value) })),
     categories: [...categories].map(([id, value]) => ({ id, label: categoryLabels[id], ...project(value) })),
+    categoryDaily: [...categoryDaily].sort(([left], [right]) => left.localeCompare(right)).flatMap(([date, groups]) =>
+      (Object.keys(categoryLabels) as WalletActivityCategoryId[]).flatMap(categoryId => {
+        const value = groups.get(categoryId);
+        return value ? [{ date, categoryId, ...project(value) }] : [];
+      })),
   };
 }
 

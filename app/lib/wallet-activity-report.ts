@@ -1,11 +1,12 @@
 import { readWalletAnalytics } from './wallet-analytics';
 import type { WalletActivityBucket, WalletActivityTotals, WalletAnalytics } from './wallet-analytics-types';
 
-export type WalletActivityReport = WalletAnalytics & {
+export type WalletActivityReport = Omit<WalletAnalytics, 'categoryDaily'> & {
   dailyLimit: 30;
-  /** All distinct UTC dates in the selected provider page, before this projection. */
-  dailyTotalDays: number;
-  dailyOmittedDays: number;
+  /** All distinct UTC dates in the accepted provider page; null when that page is unavailable. */
+  dailyTotalDays: number | null;
+  /** Source dates excluded from this preview; null when the page is unavailable. */
+  dailyOmittedDays: number | null;
 };
 
 function totals(value: WalletActivityTotals | null): WalletActivityTotals | null {
@@ -31,12 +32,12 @@ export function projectWalletActivityReport(value: WalletAnalytics): WalletActiv
     // The service sorts dates ascending. Do not change the full-page totals or
     // coverage when bounding this daily subset for the calling chat.
     daily: value.daily.slice(-30).map(row => ({ date: row.date, ...bucket(row) })),
-    dailyLimit: 30, dailyTotalDays: value.daily.length, dailyOmittedDays: Math.max(0, value.daily.length - 30),
+    dailyLimit: 30, dailyTotalDays: coverage.kind === 'unavailable' ? null : value.daily.length, dailyOmittedDays: coverage.kind === 'unavailable' ? null : Math.max(0, value.daily.length - 30),
     categories: value.categories.map(row => ({ id: row.id, label: row.label, ...bucket(row) })),
     precisionPolicy: value.precisionPolicy,
     limitations: [
       ...value.limitations,
-      'Page totals, category totals and coverage describe all returned rows. Daily buckets show only the latest thirty returned UTC dates; dailyTotalDays and dailyOmittedDays identify the subset. Gaps are not filled, and daily buckets must not be summed as if they cover an omitted portion of the page.',
+      'Page totals, category totals and coverage describe all returned rows. Daily buckets show only the latest thirty returned UTC dates; dailyTotalDays and dailyOmittedDays identify the subset and remain null when the source page is unavailable. Date/category intersections are not included in this compact report. Gaps are not filled, and daily buckets must not be summed as if they cover an omitted portion of the page.',
       'This is current on-demand journal evidence, not saved wallet history, lifetime income, a balance curve or profit. A verified empty page has zero observed activity; unavailable or entirely unreported amounts remain null. No history capture or additional pages are requested.',
     ],
   };
