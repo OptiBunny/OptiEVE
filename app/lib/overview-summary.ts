@@ -6,7 +6,38 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const integer = (value: unknown, minimum = 0): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum;
 const money = (value: unknown, minimum = 0): value is number => typeof value === 'number' && Number.isFinite(value) && value >= minimum && Math.abs(value) <= Number.MAX_SAFE_INTEGER / 100;
 const count = (label: string, value: number): OverviewMetric => ({ label, value, unit: 'count' });
-const isk = (label: string, value: number): OverviewMetric => ({ label, value: Math.round(value * 100) / 100, unit: 'ISK' });
+type Money = { units: bigint; scale: number };
+const centLimit = BigInt(Number.MAX_SAFE_INTEGER);
+function decimal(value: number): Money {
+  if (!Number.isFinite(value)) return invalid();
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/.exec(String(value));
+  if (!match) return invalid();
+  const fraction = match[3] ?? '', exponent = Number(match[4] ?? 0) - fraction.length;
+  const units = BigInt(match[2] + fraction) * (match[1] ? -1n : 1n);
+  return { units: exponent > 0 ? units * 10n ** BigInt(exponent) : units, scale: Math.max(0, -exponent) };
+}
+function bounded(value: Money): Money {
+  if ((value.units < 0n ? -value.units : value.units) * 100n > centLimit * 10n ** BigInt(value.scale)) return invalid();
+  return value;
+}
+// Exact arithmetic on received JSON-number decimals, then one cent rounding:
+// ties go away from zero. Reject a result the numeric wire contract cannot retain.
+function numericISK(value: number | Money): number {
+  const exact = bounded(typeof value === 'number' ? decimal(value) : value);
+  const divisor = 10n ** BigInt(Math.max(0, exact.scale - 2)), magnitude = exact.units < 0n ? -exact.units : exact.units;
+  const cents = (exact.scale <= 2 ? magnitude * 10n ** BigInt(2 - exact.scale) : magnitude / divisor + (magnitude % divisor * 2n >= divisor ? 1n : 0n)) * (exact.units < 0n ? -1n : 1n);
+  if ((cents < 0n ? -cents : cents) > centLimit) return invalid();
+  const digits = String(cents < 0n ? -cents : cents).padStart(3, '0');
+  const valueNumber = Number((cents < 0n ? '-' : '') + digits.slice(0, -2) + '.' + digits.slice(-2));
+  const restored = decimal(valueNumber);
+  if (restored.units * 100n !== cents * 10n ** BigInt(restored.scale)) return invalid();
+  return valueNumber;
+}
+const isk = (label: string, value: number | Money): OverviewMetric => ({ label, value: numericISK(value), unit: 'ISK' });
+function notional(price: number, quantity: number): Money {
+  const value = decimal(price);
+  return bounded({ units: value.units * BigInt(quantity), scale: value.scale });
+}
 
 // ESI dates use an explicit timezone. Reject rollover dates and ambiguous local time.
 export function overviewDate(value: unknown): string | null {
@@ -37,13 +68,15 @@ function rows(value: unknown, key: string): Record<string, unknown>[] {
     return row;
   });
 }
-function sum(values: number[]): number {
-  let total = 0;
-  for (const value of values) {
-    total += value;
-    if (!money(value) || !money(total)) return invalid();
+function sum(values: Array<number | Money>, signed = false): Money {
+  let total: Money = { units: 0n, scale: 0 };
+  for (const raw of values) {
+    const value = bounded(typeof raw === 'number' ? decimal(raw) : raw);
+    if (!signed && value.units < 0n) return invalid();
+    const scale = Math.max(total.scale, value.scale);
+    total = { units: total.units * 10n ** BigInt(scale - total.scale) + value.units * 10n ** BigInt(scale - value.scale), scale };
   }
-  return total;
+  return bounded(total);
 }
 export type OverviewSummary = { metrics: OverviewMetric[]; message: string; partial?: boolean };
 
@@ -69,7 +102,7 @@ export function freelanceRows(data: unknown, maximum = 10000) {
     const reward = row.reward as { initial: number; remaining: number } | undefined;
     const name = row.name.normalize('NFC').replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ').trim().slice(0, 256);
     if (!name) return invalid();
-    return { id: (row.id as string).toLowerCase(), name, state: row.state, current: row.progress.current, desired: row.progress.desired, lastModified: new Date(lastModified).toISOString(), ...(reward ? { initialReward: Math.round(reward.initial * 100) / 100, remainingReward: Math.round(reward.remaining * 100) / 100 } : {}) };
+    return { id: (row.id as string).toLowerCase(), name, state: row.state, current: row.progress.current, desired: row.progress.desired, lastModified: new Date(lastModified).toISOString(), ...(reward ? { initialReward: numericISK(reward.initial), remainingReward: numericISK(reward.remaining) } : {}) };
   });
 }
 
@@ -79,12 +112,10 @@ export function summarizeOverview(id: OverviewSectionId, data: unknown, now: num
     if (!personal) {
       const divisions = rows(data, 'division').sort((a, b) => Number(a.division) - Number(b.division));
       if (divisions.length > 7) return invalid();
-      let balance = 0;
       for (const division of divisions) {
         if (Number(division.division) > 7 || !money(division.balance, -Number.MAX_SAFE_INTEGER / 100)) return invalid();
-        balance += division.balance as number;
-        if (!money(balance, -Number.MAX_SAFE_INTEGER / 100)) return invalid();
       }
+      const balance = sum(divisions.map(row => row.balance as number), true);
       const complete = divisions.length === 7;
       const metrics = [count('Wallet divisions returned', divisions.length), ...divisions.map(row => isk(`Division ${row.division} balance`, row.balance as number))];
       if (divisions.length) metrics.push(isk(complete ? 'Balance across all seven divisions' : 'Balance of returned divisions', balance));
@@ -119,7 +150,7 @@ export function summarizeOverview(id: OverviewSectionId, data: unknown, now: num
     // https://developers.eveonline.com/blog/esi-and-optional-booleans
     const buys = selected.filter(row => row.is_buy_order === true), sells = selected.filter(row => row.is_buy_order !== true);
     const pastExpiry = selected.filter(row => date(row.issued) + Number(row.duration) * 86400000 <= now).length;
-    const metrics = [count('Personal buy orders', buys.length), count('Personal sell orders', sells.length), isk('Remaining sell asking value', sum(sells.map(row => Number(row.price) * Number(row.volume_remain)))), isk('Remaining buy bid value', sum(buys.map(row => Number(row.price) * Number(row.volume_remain))))];
+    const metrics = [count('Personal buy orders', buys.length), count('Personal sell orders', sells.length), isk('Remaining sell asking value', sum(sells.map(row => notional(row.price as number, row.volume_remain as number)))), isk('Remaining buy bid value', sum(buys.map(row => notional(row.price as number, row.volume_remain as number))))];
     if (buys.every(row => row.escrow !== undefined)) metrics.push(isk('Buy-order escrow', sum(buys.map(row => Number(row.escrow)))));
     if (personal && selected.length !== all.length) metrics.push(count('Corporation orders excluded', all.length - selected.length));
     if (pastExpiry) metrics.push(count('Past stated expiry', pastExpiry));
@@ -130,11 +161,11 @@ export function summarizeOverview(id: OverviewSectionId, data: unknown, now: num
     const allowed = ['active', 'cancelled', 'delivered', 'paused', 'ready', 'reverted'];
     for (const job of jobs) {
       if (typeof job.status !== 'string' || !allowed.includes(job.status)) return invalid();
-      date(job.end_date);
+      if (date(job.end_date) < date(job.start_date)) return invalid();
     }
     const ready = jobs.filter(row => row.status === 'ready').length;
     const active = jobs.filter(row => row.status === 'active');
-    return { metrics: [count('Jobs returned', jobs.length), count('Running by schedule', active.filter(row => date(row.end_date) > now).length), count('Ready according to EVE', ready), count('Active past scheduled end', active.filter(row => date(row.end_date) <= now).length), count('Paused jobs', jobs.filter(row => row.status === 'paused').length)], message: 'Completed jobs are not requested. An active job past its scheduled end may be awaiting an EVE update; it is not proof of delivery or output ownership.' };
+    return { metrics: [count('Jobs returned', jobs.length), count('Running by schedule', active.filter(row => date(row.start_date) <= now && date(row.end_date) > now).length), count('Active before scheduled start', active.filter(row => date(row.start_date) > now).length), count('Ready according to EVE', ready), count('Active past scheduled end', active.filter(row => date(row.end_date) <= now).length), count('Paused jobs', jobs.filter(row => row.status === 'paused').length)], message: 'Completed jobs are not requested. Provider status and scheduled times are separate evidence. An active job before its scheduled start is not counted as running; an active job past its scheduled end may be awaiting an EVE update. Neither schedule nor status proves delivery or output ownership.' };
   }
   if (id === 'contracts') {
     const contracts = rows(data, 'contract_id');
@@ -165,7 +196,9 @@ export function summarizeOverview(id: OverviewSectionId, data: unknown, now: num
     const metrics = [count(personal ? 'Participated jobs returned' : 'Freelance jobs in this batch', all.length), count('Active jobs returned', all.filter(row => row.state === 'Active').length), count('Completed jobs returned', all.filter(row => row.state === 'Completed').length), count('Closed or expired jobs returned', all.filter(row => row.state === 'Closed' || row.state === 'Expired').length)];
     const rewards = all.filter(row => row.initialReward !== undefined);
     metrics.push(count('Jobs with reported reward reserves', rewards.length));
-    if (rewards.length) metrics.push(isk('Remaining reserve for jobs reporting rewards', sum(rewards.map(row => row.remainingReward as number))));
+    // Aggregate validated source amounts before rounding individual row displays.
+    const reserves = (data as { freelance_jobs: Array<{ reward?: { remaining: number } }> }).freelance_jobs.flatMap(row => row.reward ? [row.reward.remaining] : []);
+    if (rewards.length) metrics.push(isk('Remaining reserve for jobs reporting rewards', sum(reserves)));
     return { metrics, message: (personal ? 'Only jobs in which the selected character is actively participating are requested; this is not freelance history. ' : 'Only one corporation freelance-job batch is requested; this is not a corporation-wide total. ') + 'Progress belongs to each job, not the selected character, so different objectives are not added together. Reward reserves are job budgets, not earned, claimable or paid rewards or profit. Missing rewards are unavailable, not zero. Participation details and participant lists are not requested.' };
   }
   return invalid();
