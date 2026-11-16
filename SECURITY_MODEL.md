@@ -244,6 +244,12 @@ character's current profile; ESI remains authoritative for membership and roles.
 Documented asset-name and coordinate POSTs are read lookups, not game writes.
 The planetary scope's provider name includes `manage_planets`; this implementation
 exposes planetary reads only.
+Transaction continuation preserves the existing minimum-ID convention and
+positive-safe-ID validation. A returned nextFromId must be strictly below a
+submitted cursor; empty, unchanged and forward-only batches return null. Raw
+boundary and duplicate rows remain intact, with explicit deduplication guidance.
+A null continuation is not proof of complete history or a validated lifetime
+ledger. No automatic paging or collection is introduced.
 
 | Surface | Important projection and evidence boundary |
 | --- | --- |

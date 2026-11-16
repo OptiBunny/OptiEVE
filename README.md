@@ -260,7 +260,7 @@ Disconnect removes the connector's stored authorization and cancels that user's 
 
 ## Data limits
 
-EVE caches API responses and limits historical availability. Follow pagination and wallet transaction cursors before computing totals. Corporation wallet transaction and journal reads cover one selected division at a time; balance reads report the returned divisions with explicit coverage. Public regional market books can omit private structure orders. The application does not provide a long-term transaction archive or recurring polling.
+EVE caches API responses and limits historical availability. Follow pagination and wallet transaction cursors before computing totals. Transaction cursors include their boundary record: deduplicate transaction IDs when combining manually requested batches, and request the next batch only when `nextFromId` is non-null. An unchanged or forward-only batch now returns a null continuation. This means no further backward cursor was established, not that complete history was returned. See [CCP’s inclusive cursor documentation](https://developers.eveonline.com/docs/services/esi/pagination/from-id/). Corporation wallet transaction and journal reads cover one selected division at a time; balance reads report the returned divisions with explicit coverage. Public regional market books can omit private structure orders. The application does not provide a long-term transaction archive or recurring polling.
 
 ## Third-party notices
 
