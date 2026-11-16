@@ -67,12 +67,16 @@ function headerTime(value: unknown): number | null {
 }
 function expiry(result: Record<string, unknown>, received: number): string | null {
   const expires = headerTime(result.cacheExpires), date = headerTime(result.responseDate);
+  if (result.cacheControl != null && (typeof result.cacheControl !== 'string' || result.cacheControl.length > 512)) return null;
   const control = typeof result.cacheControl === 'string' && result.cacheControl.length <= 512 ? result.cacheControl : '';
   if (/(?:^|,)\s*(?:no-cache|no-store)(?=\s*(?:,|$))/i.test(control)) return new Date(received).toISOString();
   const age = result.cacheAge == null ? 0 : typeof result.cacheAge === 'string' && /^\d{1,10}$/.test(result.cacheAge) ? Number(result.cacheAge) : NaN;
   if (!integer(age, 0, 604800)) return null;
-  const match = /(?:^|,)\s*max-age=(\d+)(?=\s*(?:,|$))/i.exec(control), maxAge = match ? Number(match[1]) : null;
+  const maxAgeDirective = /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
+  const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
   const cached = integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= received + 60000 ? Math.min(date + maxAge * 1000, received + (maxAge - age) * 1000) : null;
+  // An explicit max-age cannot fall back to Expires when its evidence is unusable.
+  if (maxAgeDirective && cached === null) return null;
   const until = expires === null ? cached : cached === null ? expires : Math.min(expires, cached);
   return until === null ? null : new Date(until).toISOString();
 }

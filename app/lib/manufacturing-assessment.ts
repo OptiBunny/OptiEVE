@@ -81,12 +81,15 @@ export function manufacturingExpiryTime(value: unknown): number | null {
 }
 export function manufacturingPrivateExpiry(value: Record<string, unknown>, received: number): string | null {
   const expires = manufacturingExpiryTime(value.cacheExpires), date = manufacturingExpiryTime(value.responseDate);
+  if (value.cacheControl != null && (typeof value.cacheControl !== 'string' || value.cacheControl.length > 256)) return null;
   const control = typeof value.cacheControl === 'string' && value.cacheControl.length <= 256 ? value.cacheControl : '';
   const age = value.cacheAge == null ? 0 : typeof value.cacheAge === 'string' && /^\d+$/.test(value.cacheAge) ? Number(value.cacheAge) : NaN;
-  const match = /(?:^|,)\s*max-age=(\d+)(?:\s*(?:,|$))/i.exec(control), maxAge = match ? Number(match[1]) : null;
+  const maxAgeDirective = /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
+  const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
   const cached = maxAge !== null && integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= received + 60000 ? Math.min(date + maxAge * 1000, received + (maxAge - age) * 1000) : null;
   let expiry = expires === null ? cached : cached === null ? expires : Math.min(expires, cached);
   if (/(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(control)) expiry = received;
+  else if (maxAgeDirective && cached === null) expiry = null;
   return expiry === null ? null : new Date(expiry).toISOString();
 }
 export function manufacturingSourceFreshness(sources: unknown, at: number): 'fresh' | 'stale' | 'unknown' {

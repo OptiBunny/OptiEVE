@@ -57,11 +57,13 @@ function sourceHeaders(url: string, headers: Headers, now: number): Manufacturin
   const expiry = headerDate(headers.get('expires')), date = headerDate(headers.get('date'));
   const control = headers.get('cache-control'), cleanControl = control && control.length <= 256 && !/[\x00-\x1f\x7f]/.test(control) ? control : null;
   const ageText = headers.get('age'), age = ageText === null ? 0 : /^\d+$/.test(ageText) ? Number(ageText) : NaN;
-  const maxAgeMatch = cleanControl && /(?:^|,)\s*max-age=(\d+)(?:\s*(?:,|$))/i.exec(cleanControl);
+  const maxAgeDirective = cleanControl && /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(cleanControl);
+  const maxAgeMatch = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]);
   const maxAge = maxAgeMatch ? Number(maxAgeMatch[1]) : null;
   const cacheExpiry = maxAge !== null && integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= now + 60_000 ? Math.min(date + maxAge * 1000, now + (maxAge - age) * 1000) : null;
   let finalExpiry = expiry === null ? cacheExpiry : cacheExpiry === null ? expiry : Math.min(expiry, cacheExpiry);
   if (cleanControl && /(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(cleanControl)) finalExpiry = now;
+  else if (control !== null && (control.length > 256 || /[\x00-\x1f\x7f]/.test(control)) || maxAgeDirective && cacheExpiry === null) finalExpiry = null;
   const modified = headerDate(headers.get('last-modified'));
   return { url, retrievedAt: new Date(now).toISOString(), cacheExpires: finalExpiry === null ? null : new Date(finalExpiry).toISOString(), lastModified: modified === null ? null : new Date(modified).toISOString(), cacheControl: cleanControl };
 }
