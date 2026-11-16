@@ -94,11 +94,14 @@ function catalogExpiry(headers: Headers, now: number): string | null {
   const headerDate = (value: string | null) => value && value.length <= 100 && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
   const expires = headerDate(headers.get('expires')), date = headerDate(headers.get('date'));
   const rawControl = headers.get('cache-control'), control = rawControl && rawControl.length <= 256 && !/[\x00-\x1f\x7f]/.test(rawControl) ? rawControl : null;
+  if (rawControl !== null && (rawControl.length > 256 || /[\x00-\x1f\x7f]/.test(rawControl))) return null;
   const rawAge = headers.get('age'), age = rawAge === null ? 0 : /^\d+$/.test(rawAge) ? Number(rawAge) : NaN;
-  const match = control && /(?:^|,)\s*max-age=(\d+)(?:\s*(?:,|$))/i.exec(control), maxAge = match ? Number(match[1]) : null;
+  const maxAgeDirective = control && /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
+  const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
   const maxAgeExpiry = maxAge !== null && integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= now + 60000 ? Math.min(date + maxAge * 1000, now + (maxAge - age) * 1000) : null;
   let expiry = expires === null ? maxAgeExpiry : maxAgeExpiry === null ? expires : Math.min(expires, maxAgeExpiry);
   if (control && /(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(control)) expiry = now;
+  else if (maxAgeDirective && maxAgeExpiry === null) expiry = null;
   return expiry === null ? null : new Date(expiry).toISOString();
 }
 export function createManufacturingCatalogStatusReader(dependencies: StatusDependencies = {}) {

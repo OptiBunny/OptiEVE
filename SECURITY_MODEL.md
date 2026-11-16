@@ -130,6 +130,19 @@ rejection paths drain unread bodies to preserve Windows local-worker connection
 reuse. An upload that never finishes can delay its own response; the gateway must
 also enforce connection and resource limits.
 
+### Cache evidence and uncertainty
+
+The seven analytics expiry helpers and manufacturing private, market and catalog
+helpers do not promote an explicit max-age directive to fresh through an Expires
+fallback when its age/date/value prerequisites cannot be validated. That evidence
+stays unknown. Explicit no-cache/no-store overrides remain stale; valid max-age,
+age, date and Expires evidence retain conservative expiry bounds. Saved-wallet
+capture, blueprint collection/reconciliation and manufacturing workspaces inherit
+the relevant helpers; this changes evidence classification, not reads or storage.
+Raw overview/workspace adapters that expose provider headers are separate paths,
+not covered by a claim that every reader uses these helpers. See
+[RFC 9111 section 4.2.1](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.2.1).
+
 ### Authorization lifecycle and encryption
 
 OAuth uses PKCE S256, a hashed random state, user binding, a logical ten-minute
