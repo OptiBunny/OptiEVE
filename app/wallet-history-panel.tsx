@@ -12,6 +12,7 @@ const dayChoices: WalletHistoryReportDays[] = [7, 30, 90, 365];
 const retentionChoices: WalletHistoryDays[] = [30, 90, 365];
 
 export function WalletHistoryResults({ result }: { result: WalletHistoryView }) {
+  if (!result.observationsAvailable) return <div className="analytics-section"><h3>Saved wallet observations unavailable</h3><p className="overview-state">The current connection has no saved wallet read permission. Saved entry counts, amounts, dates and capture details are hidden; this is not evidence of an empty saved period. History settings and permitted pause or erase controls remain available above.</p></div>;
   const { report, lastCapture, comparison } = result;
   return <div className="analytics-section">
     <div className="overview-coverage"><strong>Saved character wallet observations</strong><span>Last {report.days} days · retention {result.settings.retentionDays} days</span><span>{report.entries} saved entries · {report.missingAmountEntries} without amounts</span></div>

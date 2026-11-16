@@ -17,7 +17,7 @@ const bucket = { entries: count, amountEntries: count, missingAmountEntries: cou
 const categoryIds = ['market', 'transfers', 'rewards', 'fees', 'industry', 'contracts', 'other'] as const;
 const categoryLabels = { market: 'Market activity', transfers: 'Transfers', rewards: 'Rewards and bounties', fees: 'Taxes and fees', industry: 'Industry and services', contracts: 'Contracts', other: 'Other activity' } as const;
 const schema = z.strictObject({
-  characterId: id, generatedAt: date, status: z.enum(['disabled', 'ready', 'partial', 'empty']), message: text,
+  characterId: id, generatedAt: date, observationsAvailable: z.boolean(), status: z.enum(['needs_permission', 'disabled', 'ready', 'partial', 'empty']), message: text,
   settings: z.strictObject({ enabled: z.boolean(), retentionDays: days }),
   // A rolling 365-day interval can touch 366 UTC dates; permitted clock skew
   // may add one more date just after midnight, without widening the time bound.
@@ -94,11 +94,15 @@ export function walletHistoryResponse(value: unknown, input: WalletHistoryArgs):
   const args = selectedArgs(input), parsed = schema.safeParse(value);
   if (!parsed.success) throw invalid();
   const result = parsed.data, report = result.report, generated = Date.parse(result.generatedAt);
+  if (!result.observationsAvailable && (args.operation === 'report' || args.operation === 'capture' || args.operation === 'configure' && args.enabled ||
+      report.entries !== 0 || report.amountEntries !== 0 || report.missingAmountEntries !== 0 || report.totals !== null ||
+      report.earliest !== null || report.latest !== null || report.daily.length !== 0 || report.categories.length !== 0 ||
+      result.lastCapture !== null || result.comparison !== undefined)) throw invalid();
   if (result.characterId !== args.characterId || report.days !== (args.operation === 'report' ? args.days ?? 30 : 30) ||
       !validBucket(report, true) || !matchingBuckets(report.daily, report) || !matchingBuckets(report.categories, report) ||
       report.categories.some(row => row.label !== categoryLabels[row.id]) || new Set(report.categories.map(row => row.id)).size !== report.categories.length ||
       report.daily.some((row, i) => i > 0 && row.date <= report.daily[i - 1].date) ||
-      result.status !== (!result.settings.enabled ? 'disabled' : report.entries ? 'partial' : 'empty') || !validComparison(result, args)) throw invalid();
+      result.status !== (!result.observationsAvailable ? 'needs_permission' : !result.settings.enabled ? 'disabled' : report.entries ? 'partial' : 'empty') || !validComparison(result, args)) throw invalid();
   if (!report.entries) {
     if (report.earliest !== null || report.latest !== null || report.totals !== null || report.daily.length || report.categories.length) throw invalid();
   } else {
