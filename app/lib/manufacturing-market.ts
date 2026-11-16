@@ -84,25 +84,52 @@ export function createManufacturingMarketReader(dependencies: Dependencies = {})
   const bookCache = new Map<string, Promise<Book>>();
   const pricesCache = new Map<string, Promise<PublicResponse>>();
   const signalFor = (options: Options) => options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(55000)]) : AbortSignal.timeout(55000);
+  // Match the bounded core/MCP reader: one growing buffer and one removable
+  // abort listener per pending read. Cleanup never waits on a provider cancel.
+  const cancelBody = (response: Response) => { try { void response.body?.cancel().catch(() => {}); } catch {} };
+  async function publicBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<unknown> {
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined, done = false, stop = () => {};
+    try {
+      signal.throwIfAborted();
+      const length = response.headers.get('content-length');
+      if (length && /^\d+$/.test(length) && Number(length) > maxBytes) return fail('Public EVE data exceeded the safe response limit.');
+      if (!response.body) return fail();
+      reader = response.body.getReader(); let bytes = new Uint8Array(Math.min(maxBytes, 16384)), size = 0;
+      while (true) {
+        signal.throwIfAborted();
+        const chunk = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+          const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); }; stop = abort;
+          signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) { abort(); return; }
+          reader!.read().then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+        });
+        signal.throwIfAborted(); if (chunk.done) { done = true; break; }
+        if (chunk.value.byteLength > maxBytes - size) return fail('Public EVE data exceeded the safe response limit.');
+        const required = size + chunk.value.byteLength;
+        if (required > bytes.byteLength) { const expanded = new Uint8Array(Math.min(maxBytes, Math.max(required, bytes.byteLength * 2))); expanded.set(bytes.subarray(0, size)); bytes = expanded; }
+        bytes.set(chunk.value, size); size = required;
+      }
+      signal.throwIfAborted(); const data: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))); signal.throwIfAborted(); return data;
+    } catch (error) { signal.throwIfAborted(); if (error instanceof ManufacturingMarketError) throw error; return fail(); }
+    finally {
+      signal.removeEventListener('abort', stop);
+      if (reader) { if (!done) { try { void reader.cancel().catch(() => {}); } catch {} } try { reader.releaseLock(); } catch {} }
+      else cancelBody(response);
+    }
+  }
   async function get(path: string, signal: AbortSignal, maxBytes = 4 * 1024 * 1024): Promise<PublicResponse> {
     signal.throwIfAborted();
-    const url = ESI + path;
+    const url = ESI + path, active = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
     let response: Response;
-    try { response = await request(url, { method: 'GET', headers: { Accept: 'application/json', 'X-Compatibility-Date': COMPATIBILITY, 'User-Agent': 'OptiEVE/1.0 (read-only manufacturing)' }, redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) }); }
+    try { response = await request(url, { method: 'GET', headers: { Accept: 'application/json', 'X-Compatibility-Date': COMPATIBILITY, 'User-Agent': 'OptiEVE/1.0 (read-only manufacturing)' }, redirect: 'manual', signal: active }); }
     catch { signal.throwIfAborted(); return fail('Public EVE data is temporarily unavailable. No retry was made.'); }
-    if (response.status !== 200) { await response.body?.cancel(); return fail(response.status === 420 || response.status === 429 ? 'EVE is rate limiting public reads. Retry later; no automatic retry was made.' : response.status === 404 ? 'The requested public EVE record was not found. Private structures are not supported as market stations here.' : 'Public EVE data is temporarily unavailable. No upstream body was retained.'); }
-    const length = response.headers.get('content-length');
-    if (length && /^\d+$/.test(length) && Number(length) > maxBytes) { await response.body?.cancel(); return fail('Public EVE data exceeded the safe response limit.'); }
-    const reader = response.body?.getReader(); if (!reader) return fail();
-    const decoder = new TextDecoder('utf-8', { fatal: true }); let text = '', size = 0;
     try {
-      while (true) { const chunk = await reader.read(); signal.throwIfAborted(); if (chunk.done) break; size += chunk.value.byteLength; if (size > maxBytes) return fail('Public EVE data exceeded the safe response limit.'); text += decoder.decode(chunk.value, { stream: true }); }
-      text += decoder.decode();
-    } catch (error) { await reader.cancel().catch(() => {}); if (error instanceof ManufacturingMarketError) throw error; signal.throwIfAborted(); return fail(); }
-    finally { reader.releaseLock(); }
-    let data: unknown; try { data = JSON.parse(text); } catch { return fail(); }
-    const pagesText = response.headers.get('x-pages'), pages = pagesText && /^\d+$/.test(pagesText) && integer(Number(pagesText), 1, 1_000_000) ? Number(pagesText) : null;
-    return { data, source: sourceHeaders(url, response.headers, now()), pages };
+      if (active.aborted) { cancelBody(response); active.throwIfAborted(); }
+      if (response.status !== 200) { cancelBody(response); return fail(response.status === 420 || response.status === 429 ? 'EVE is rate limiting public reads. Retry later; no automatic retry was made.' : response.status === 404 ? 'The requested public EVE record was not found. Private structures are not supported as market stations here.' : 'Public EVE data is temporarily unavailable. No upstream body was retained.'); }
+      const data = await publicBody(response, maxBytes, active); active.throwIfAborted();
+      const pagesText = response.headers.get('x-pages'), pages = pagesText && /^\d+$/.test(pagesText) && integer(Number(pagesText), 1, 1_000_000) ? Number(pagesText) : null;
+      const source = sourceHeaders(url, response.headers, now()); active.throwIfAborted();
+      return { data, source, pages };
+    } catch (error) { signal.throwIfAborted(); if (error instanceof ManufacturingMarketError) throw error; return fail(); }
   }
   async function station(region: number, stationId: number, signal: AbortSignal) {
     const key = `${region}:${stationId}`;
@@ -176,8 +203,10 @@ export function createManufacturingMarketReader(dependencies: Dependencies = {})
       limitations: ['Observed gross order-book allocation, not an executed trade or realized profit. Sales tax, broker charges, hauling and manufacturing costs are separate.', 'Exact selected NPC station only; ranged buy orders based at other locations and private structure books are excluded.', 'Owned-order exclusion covers the supplied IDs and the caller’s completeness declaration; no all-account ownership is inferred.', 'Price-priority allocation honors effective minimum fill min(min_volume, volume_remain). Skipping minimum-volume orders is conservative and may omit alternative feasible allocations.', 'Pages are fetched separately and may change; matching page counts do not prove an atomic snapshot.', 'Public ESI prices can be cached and orders can disappear before execution. Average unit ISK is rounded; grossISK is the exact allocated cent sum.'] };
   }
   async function history(input: unknown, options: Options = {}) {
-    if (!record(input) || !keys(input, ['regionId', 'typeId', 'days']) || !integer(input.regionId, 1) || !integer(input.typeId, 1) || input.days !== undefined && !integer(input.days, 1, 90)) return fail('Choose a public region, type and 1–90 history days.');
-    const days = (input.days as number | undefined) ?? 30, signal = signalFor(options), response = await get(`/markets/${input.regionId}/history?type_id=${input.typeId}`, signal);
+    if (!record(input) || !keys(input, ['regionId', 'typeId', 'days'])) return fail('Choose a public region, type and 1–90 history days.');
+    const regionId = input.regionId, typeId = input.typeId, requestedDays = input.days, days = requestedDays === undefined ? 30 : requestedDays;
+    if (!integer(regionId, 1) || !integer(typeId, 1) || !integer(days, 1, 90)) return fail('Choose a public region, type and 1–90 history days.');
+    const signal = signalFor(options), response = await get(`/markets/${regionId}/history?type_id=${typeId}`, signal);
     if (!Array.isArray(response.data) || response.data.length > 1000) return fail();
     const seen = new Set<string>();
     const rows = response.data.map(row => {
@@ -190,7 +219,8 @@ export function createManufacturingMarketReader(dependencies: Dependencies = {})
     const completedAt = now(), today = new Date(completedAt).toISOString().slice(0, 10), end = Date.parse(today + 'T00:00:00Z'), start = end - days * DAY;
     const selected = rows.filter(row => Date.parse(row.date + 'T00:00:00Z') >= start && row.date < today).sort((a, b) => a.date.localeCompare(b.date));
     const totalVolume = selected.reduce((sum, row) => sum + BigInt(row.volume), 0n), totalOrderCount = selected.reduce((sum, row) => sum + BigInt(row.orderCount), 0n);
-    return { regionId: input.regionId, typeId: input.typeId, generatedAt: new Date(completedAt).toISOString(), window: { days, startUTC: new Date(start).toISOString().slice(0, 10), endExclusiveUTC: today, reportedDays: selected.length, missingDays: days - selected.length },
+    signal.throwIfAborted();
+    return { regionId, typeId, generatedAt: new Date(completedAt).toISOString(), window: { days, startUTC: new Date(start).toISOString().slice(0, 10), endExclusiveUTC: today, reportedDays: selected.length, missingDays: days - selected.length },
       rows: selected, totalReportedVolume: String(totalVolume), totalReportedOrderCount: String(totalOrderCount), averageVolumePerReportedDay: selected.length ? money((totalVolume * 100n + BigInt(Math.floor(selected.length / 2))) / BigInt(selected.length)) : null,
       sourceFreshness: freshness([response.source], completedAt), sources: [response.source], limitations: ['Regional history is not station-specific demand, an executable book or a forecast of your sales.', 'Only completed UTC days in the requested window are included. Missing dates are not imputed as zero volume.', 'Reported daily average/high/low prices are historical statistics, not guaranteed listing or execution prices.'] };
   }
