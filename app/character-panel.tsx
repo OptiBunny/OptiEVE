@@ -5,6 +5,7 @@ import { characterPublicName, characterWorkspaceRequest, formatCharacterValue } 
 import type { CharacterWorkspace, CharacterWorkspaceRequest } from './lib/character-workspace-types';
 import MiningChart from './mining-chart';
 import ReputationCharts from './reputation-charts';
+import PlanetaryPanel, { type PlanetaryChoice } from './planetary-panel';
 
 const titles = { faction_warfare: 'Faction warfare', standings: 'NPC standings', loyalty_points: 'Loyalty points', blueprints: 'Blueprint library', research: 'Research agents', planets: 'Planetary colonies', mining: 'Mining ledger' };
 const modeViews = { reputation: ['faction_warfare', 'standings', 'loyalty_points'], industry: ['blueprints', 'research', 'planets', 'mining'] } as const;
@@ -14,7 +15,7 @@ const hints = {
   loyalty_points: 'Review the character’s reported loyalty-point balance with each NPC corporation. Separate balances are not an interchangeable pool, earned ISK or a cash valuation.',
   blueprints: 'Review your reported blueprint originals, copies and original stacks, including efficiency and remaining copy runs. Location IDs may identify a station, ship or container; no private item name or location-resolution read is made.',
   research: 'Review research-agent IDs, research skill types, start times and the provider’s reported rate and remainder. These inputs are not a current spendable research-point balance or an ISK value.',
-  planets: 'This view shows your colony planet and solar-system IDs, planet types, reported pin counts, upgrade levels and last update times. It does not load colony layouts or extractor programs, or establish current production and expiry times.',
+  planets: 'This view shows your colony planet and solar-system IDs, planet types, reported pin counts, upgrade levels and last update times. The listing does not load colony layouts or extractor programs. Use the separate selected-colony control below to read reported extractor evidence; neither view establishes current production.',
   mining: 'Review your reported mining quantities by UTC date, type and solar system in EVE’s past-30-day ledger. Loading this view reveals the listed mining locations. Each page covers only its returned records; quantities are not income, volume or profit.',
 };
 const statusLabels = { ready: 'Available', partial: 'Limited coverage', needs_permission: 'Permission needed', unavailable: 'Unavailable', error: 'Could not load' };
@@ -77,6 +78,7 @@ export default function CharacterPanel({ characters, openConnections, mode = 're
           return <td key={column.key}>{formatCharacterValue(row.cells[column.key], column)}{name && <><br/><small>{name}</small></>}</td>;
         })}</tr>)}</tbody>
       </table></div>}
+      {mode === 'industry' && result.view === 'planets' && (result.status === 'ready' || result.status === 'partial') && result.rows.length > 0 && <PlanetaryPanel key={`${result.characterId}:${result.generatedAt}`} characterId={result.characterId} planets={result.rows.map(row => ({ planetId: row.cells.planet, solarSystemId: row.cells.system, planetType: row.cells.type })) as PlanetaryChoice[]}/>}
       {result.next && <button className="button secondary workspace-next" onClick={() => void load(result.next!, current ? [...trail, current] : trail)}>Load next batch →</button>}
       <details className="overview-freshness"><summary>Coverage &amp; freshness</summary><p>Coverage: {result.coverage}. Batches are fetched separately and can change between requests. A recent fetch can still contain cached EVE data.</p>{result.retrievedAt && <p>Fetched: {time(result.retrievedAt)}</p>}{result.cacheExpires && <p>ESI cache expiry: {time(result.cacheExpires)}</p>}{result.labels?.retrievedAt && <p>Public names fetched: {time(result.labels.retrievedAt)}</p>}{result.labels?.cacheExpires && <p>Public names cache expiry: {time(result.labels.cacheExpires)}</p>}<p>Required read permission: <code>{result.scope}</code></p></details>
     </article>}
