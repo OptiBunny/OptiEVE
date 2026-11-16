@@ -20,6 +20,7 @@ import CalendarAnalyticsPanel from './calendar-analytics-panel';
 import PersonalFreelancePanel from './personal-freelance-panel';
 import SavedFittingsPanel from './saved-fittings-panel';
 import MailAnalyticsPanel from './mail-analytics-panel';
+import ContactsAnalyticsPanel from './contacts-analytics-panel';
 import BlueprintAnalyticsPanel from './blueprint-analytics-panel';
 import WorkspaceNavigation, { type WorkspaceDestination } from './workspace-navigation';
 export default function ConnectionPanel(){
@@ -87,6 +88,7 @@ export default function ConnectionPanel(){
   {tab==='clones'&&status&&!statusLoading&&<CloneAnalyticsPanel key={'clones-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='calendar'&&status&&!statusLoading&&<CalendarAnalyticsPanel key={'calendar-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='freelance'&&status&&!statusLoading&&handoffIsCurrent&&<PersonalFreelancePanel key={'freelance-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='contacts'&&status&&!statusLoading&&handoffIsCurrent&&<ContactsAnalyticsPanel key={'contacts-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='mail'&&status&&!statusLoading&&handoffIsCurrent&&<MailAnalyticsPanel key={'mail-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='fittings'&&status&&!statusLoading&&handoffIsCurrent&&<SavedFittingsPanel key={'fittings-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='orders'&&status&&!statusLoading&&handoffIsCurrent&&<OrderAnalyticsPanel key={'orders-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
