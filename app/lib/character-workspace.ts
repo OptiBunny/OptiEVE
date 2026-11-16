@@ -1,5 +1,6 @@
 import { EveError, listConnections, readCharacterData, readPublicNames } from './eve';
 import { OverviewDataError, overviewDate } from './overview-summary';
+import { walletActivityExpiry } from './wallet-analytics';
 import type { CharacterWorkspace, CharacterWorkspaceColumn, CharacterWorkspaceLabels, CharacterWorkspaceMetric, CharacterWorkspaceRequest, CharacterWorkspaceRow } from './character-workspace-types';
 
 const scopes = {
@@ -47,11 +48,7 @@ function args(value: unknown): CharacterWorkspaceRequest {
 function blank(selected: CharacterWorkspaceRequest, now: number, status: CharacterWorkspace['status'], message: string): CharacterWorkspace {
   return { view: selected.view, characterId: selected.characterId, generatedAt: new Date(now).toISOString(), status, coverage: 'unavailable', message, scope: scopes[selected.view], retrievedAt: null, cacheExpires: null, metrics: [], columns: [], rows: [], next: null };
 }
-function headerDate(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 100) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
-}
+
 function list(value: unknown, idKey: string): Record<string, unknown>[] {
   if (!Array.isArray(value) || value.length > 10000) return invalid();
   const seen = new Set<number>();
@@ -198,7 +195,7 @@ async function publicLabels(selected: CharacterWorkspaceRequest, rendered: Table
       seen.add(item.id);
       return { id: item.id, category: expected.get(item.id)!, name: item.name.trim() };
     });
-    return { status: names.length < expected.size ? 'partial' : 'ready', message: `Public labels resolved for ${names.length} of ${expected.size} displayed type/system IDs. Unresolved IDs remain visible. Labels do not expand the private dataset’s coverage.`, retrievedAt: date(result.retrievedAt), cacheExpires: headerDate(result.cacheExpires), names };
+    return { status: names.length < expected.size ? 'partial' : 'ready', message: `Public labels resolved for ${names.length} of ${expected.size} displayed type/system IDs. Unresolved IDs remain visible. Labels do not expand the private dataset’s coverage.`, retrievedAt: date(result.retrievedAt), cacheExpires: walletActivityExpiry(result, Date.parse(date(result.retrievedAt))), names };
   } catch {
     signal.throwIfAborted();
     return fallback;
@@ -225,12 +222,12 @@ export function createCharacterWorkspaceReader(dependencies: Dependencies) {
       signal.throwIfAborted();
       // Classify every expiry against the same completion time exposed to the
       // client; a clock boundary between separate checks must not contradict it.
-      const completedAt = now(), cacheExpires = headerDate(result.cacheExpires), stale = cacheExpires !== null && Date.parse(cacheExpires) <= completedAt;
-      if (labels && labels.status !== 'unavailable' && labels.cacheExpires !== null && Date.parse(labels.cacheExpires) <= completedAt) {
+      const completedAt = now(), cacheExpires = walletActivityExpiry(result, Date.parse(date(result.retrievedAt))), stale = cacheExpires !== null && Date.parse(cacheExpires) <= completedAt;
+      if (labels && labels.status !== 'unavailable' && (labels.cacheExpires === null || Date.parse(labels.cacheExpires) <= completedAt)) {
         labels.status = 'partial';
-        labels.message += ' Public label data has reached its reported cache expiry.';
+        labels.message += labels.cacheExpires === null ? ' Public label freshness is unknown.' : ' Public label data has reached its reported cache expiry.';
       }
-      return { ...blank(selected, completedAt, rendered.coverage === 'complete' && !stale ? 'ready' : 'partial', rendered.message), ...rendered, ...(labels ? { labels } : {}), retrievedAt: date(result.retrievedAt), cacheExpires, message: rendered.message + (stale ? ' This response has reached its reported cache expiry; refresh before relying on it.' : '') };
+      return { ...blank(selected, completedAt, rendered.coverage === 'complete' && cacheExpires !== null && !stale ? 'ready' : 'partial', rendered.message), ...rendered, ...(labels ? { labels } : {}), retrievedAt: date(result.retrievedAt), cacheExpires, message: rendered.message + (cacheExpires === null ? ' This response has unknown cache freshness; refresh before relying on it.' : stale ? ' This response has reached its reported cache expiry; refresh before relying on it.' : '') };
     } catch (error) {
       if (signal.aborted) return blank(selected, now(), 'unavailable', 'The request was cancelled or reached its time limit. Load the view again to retry.');
       if (error instanceof EveError && error.status === 403) return blank(selected, now(), 'unavailable', 'EVE denied this read. Check this character’s granted read permission. No additional access is requested automatically.');

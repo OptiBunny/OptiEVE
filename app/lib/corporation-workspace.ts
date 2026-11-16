@@ -1,5 +1,6 @@
 import { EveError, listConnections, readCorporationData, readPublicNames } from './eve';
 import { overviewDate, OverviewDataError, extractionRows, freelanceRows } from './overview-summary';
+import { walletActivityExpiry } from './wallet-analytics';
 import type { CorporationWorkspace, CorporationWorkspaceColumn, CorporationWorkspaceRequest, CorporationWorkspaceRow } from './corporation-workspace-types';
 
 const scopes = {
@@ -81,11 +82,7 @@ type Dependencies = {
   now?: () => number;
 };
 type Table = { columns: CorporationWorkspaceColumn[]; rows: CorporationWorkspaceRow[]; details?: CorporationWorkspace['details']; message: string; coverage: CorporationWorkspace['coverage']; next: CorporationWorkspaceRequest | null };
-function headerDate(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 100) return null;
-  const time = Date.parse(value);
-  return Number.isFinite(time) ? new Date(time).toISOString() : null;
-}
+
 function blank(selected: CorporationWorkspaceRequest, now: number, status: CorporationWorkspace['status'], message: string): CorporationWorkspace {
   return { view: selected.view, characterId: selected.characterId, generatedAt: new Date(now).toISOString(), status, message, scope: scopes[selected.view], coverage: 'unavailable', retrievedAt: null, cacheExpires: null, sources: [], columns: [], rows: [], next: null };
 }
@@ -403,7 +400,7 @@ async function addPublicNames(selected: CorporationWorkspaceRequest, rendered: T
       if (!label) return invalid();
       names.set(item.id, label);
     }
-    sources.push({ dataset: 'public_names', scope: 'Public ESI (no scope)', retrievedAt: date(response.retrievedAt), cacheExpires: headerDate(response.cacheExpires) });
+    sources.push({ dataset: 'public_names', scope: 'Public ESI (no scope)', retrievedAt: date(response.retrievedAt), cacheExpires: walletActivityExpiry(response, Date.parse(date(response.retrievedAt))) });
     for (const row of rendered.rows) for (const key of ['type', 'system'] as const) {
       const value = row.cells[key];
       if (typeof value === 'number' && names.has(value)) row.cells[key] = `${names.get(value)} (${value})`;
@@ -440,7 +437,7 @@ export function createCorporationWorkspaceReader(dependencies: Dependencies) {
         if (!record(result) || result.entity !== 'corporation' || result.characterId !== selected.characterId || result.dataset !== request.dataset || !integer(result.corporationId, 1) || !overviewDate(result.retrievedAt)) return invalid();
         if (corporationId !== undefined && corporationId !== result.corporationId) throw new EveError('Corporation changed.', 409);
         corporationId = result.corporationId;
-        sources.push({ dataset: request.dataset, scope: scopes[selected.view], retrievedAt: date(result.retrievedAt), cacheExpires: headerDate(result.cacheExpires) });
+        sources.push({ dataset: request.dataset, scope: scopes[selected.view], retrievedAt: date(result.retrievedAt), cacheExpires: walletActivityExpiry(result, Date.parse(date(result.retrievedAt))) });
         return result;
       };
       const result = await fetchOne(definition(selected));
@@ -472,10 +469,11 @@ export function createCorporationWorkspaceReader(dependencies: Dependencies) {
       const rendered = table(selected, result.data, result.pagination, now(), contribution, corporationId, assetDetail);
       const namesIncomplete = await addPublicNames(selected, rendered, dependencies, sources, signal);
       signal.throwIfAborted();
+      const completedAt = now();
       const retrievedAt = sources.map(source => source.retrievedAt).sort()[0];
       const cacheExpires = sources.every(source => source.cacheExpires !== null) ? sources.map(source => source.cacheExpires as string).sort()[0] : null;
-      const stale = sources.some(source => source.cacheExpires !== null && Date.parse(source.cacheExpires) <= now());
-      return { ...blank(selected, now(), rendered.coverage === 'complete' && !stale && !namesIncomplete ? 'ready' : 'partial', rendered.message), ...rendered, ...(corporationId === undefined ? {} : { corporationId }), retrievedAt, cacheExpires, sources, message: rendered.message + (stale ? ' At least one snapshot has reached its reported cache expiry; refresh before relying on it.' : '') };
+      const stale = sources.some(source => source.cacheExpires !== null && Date.parse(source.cacheExpires) <= completedAt);
+      return { ...blank(selected, completedAt, rendered.coverage === 'complete' && cacheExpires !== null && !stale && !namesIncomplete ? 'ready' : 'partial', rendered.message), ...rendered, ...(corporationId === undefined ? {} : { corporationId }), retrievedAt, cacheExpires, sources, message: rendered.message + (cacheExpires === null ? ' At least one snapshot has unknown cache freshness; refresh before relying on it.' : stale ? ' At least one snapshot has reached its reported cache expiry; refresh before relying on it.' : '') };
     } catch (error) {
       if (signal.aborted) return blank(selected, now(), 'unavailable', 'The request was cancelled or reached its time limit. Load the view again to retry.');
       if (error instanceof EveError && error.status === 403) return blank(selected, now(), 'unavailable', 'EVE denied this read. Check the granted read permission and the character’s corporation role; no additional role is requested automatically.');
