@@ -57,9 +57,9 @@ export function PlanetaryResults({ result }: { result: PlanetaryAnalytics }) {
 
 export default function PlanetaryPanel({ characterId, planets }: { characterId: number; planets: PlanetaryChoice[] }) {
   const [planetId, setPlanetId] = useState(planets[0]?.planetId ?? 0), [result, setResult] = useState<PlanetaryAnalytics | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [signedOut, setSignedOut] = useState(false);
-  const active = useRef<AbortController | null>(null);
+  const [generation, setGeneration] = useState(0); const active = useRef<AbortController | null>(null);
   useEffect(() => () => active.current?.abort(), []);
-  function clear() { active.current?.abort(); active.current = null; setResult(null); setBusy(false); setError(''); setSignedOut(false); }
+  function clear() { setGeneration(value => value + 1); active.current?.abort(); active.current = null; setResult(null); setBusy(false); setError(''); setSignedOut(false); }
   async function load() {
     clear(); if (!planets.some(planet => planet.planetId === planetId)) return;
     const controller = new AbortController(); active.current = controller; setBusy(true);
@@ -75,7 +75,7 @@ export default function PlanetaryPanel({ characterId, planets }: { characterId: 
     {error && <div role="alert" className="alert">{error}{signedOut && <p><a href="/signin-with-chatgpt?return_to=%2F" target="_top">Sign in with ChatGPT</a></p>}</div>}
     <p role="status" aria-live="polite">{busy ? 'Reading only the selected colony; this may take up to a minute.' : result ? `Colony evidence loaded ${time(result.generatedAt)}.` : 'No colony layout loaded.'}</p>
     {result && <article className="overview-card"><p>{result.message}</p>{result.colony && <p>Planet {result.planetId} · {result.colony.planetType} · system {result.colony.solarSystemId} · upgrade {result.colony.upgradeLevel} · listing reports {result.colony.reportedPins} pins. Provider last update: {time(result.colony.lastUpdateAt)}.</p>}
-      <PlanetaryResults key={`${result.characterId}:${result.planetId}:${result.generatedAt}`} result={result}/>
+      <PlanetaryResults key={`${generation}:${result.characterId}:${result.planetId}:${result.generatedAt}`} result={result}/>
       <details className="overview-freshness"><summary>Colony sources, limits &amp; freshness</summary>{(['colonies', 'layout'] as const).map(key => { const source = result.sources[key]; return <div key={key}><h4>{key === 'colonies' ? 'Owned colony list' : 'Selected layout'}: {source.status}</h4><p>{source.message}</p><p>Accepted rows: {source.rows ?? 'unknown'} · HTTP cache: {source.freshness.state}</p><p>Fetched: {time(source.freshness.retrievedAt)} · cache expiry: {time(source.freshness.cacheExpires)} · last modified: {time(source.freshness.lastModified)}</p></div>; })}<p>Existing read permission: <code>{result.scope}</code></p><ul>{result.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></details>
     </article>}
   </section>;

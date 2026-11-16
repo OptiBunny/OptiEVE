@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { callbackError, connectionAccessPreset, connectionRequest, connectionStatus, ConnectionResponseError, reconnectAuthorization, reconnectReviewIsCurrent, reviewReconnect, selectedConnectionScopes, signInUrl, type ConnectionStatus, type ReconnectReview } from './lib/connection-client';
 import OverviewPanel from './overview-panel';
+import { overviewDestination, type OverviewShortcut, type OverviewDestination } from './lib/overview-navigation';
+type OverviewHandoff = { shortcut: OverviewShortcut; target: OverviewDestination; context: string; generation: number };
 import CorporationPanel from './corporation-panel';
 import CharacterPanel from './character-panel';
 import ManufacturingPanel from './manufacturing-panel';
@@ -22,18 +24,25 @@ export default function ConnectionPanel(){
  const [status,setStatus]=useState<ConnectionStatus|null>(null),[clientId,setClientId]=useState(''),[corporation,setCorporation]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState('');
  const [statusLoading,setStatusLoading]=useState(true),[statusError,setStatusError]=useState(''),[signedOut,setSignedOut]=useState(false);
  const [tab,setTab]=useState<WorkspaceDestination>('overview');
+ const [handoff,setHandoff]=useState<OverviewHandoff|null>(null);
+ const [,setNavigationRevision]=useState(0);
+ const navigationEpoch=useRef(0),handoffRef=useRef<OverviewHandoff|null>(null);
+ const navigationState=useRef<{status:ConnectionStatus|null;ready:boolean;tab:WorkspaceDestination}>({status:null,ready:false,tab:'overview'});
+ navigationState.current={status,ready:!!status?.configured&&!statusLoading&&!statusError&&!signedOut&&!busy,tab};
+ function selectTab(next:WorkspaceDestination){if(navigationState.current.tab===next&&!handoffRef.current)return;navigationEpoch.current++;setNavigationRevision(value=>value+1);navigationState.current.tab=next;handoffRef.current=null;setHandoff(null);setTab(next);}
  const [corporationFeatures,setCorporationFeatures]=useState<string[]>([]);
  const [accessPreset,setAccessPreset]=useState<'character'|'all'|'custom'>('character');
  const [reconnectReview,setReconnectReview]=useState<ReconnectReview|null>(null);
  const accessReview=useRef<HTMLElement|null>(null);
  const requestSequence=useRef(0);
  const reload=useCallback(async()=>{
+  navigationEpoch.current++;if(handoffRef.current)setTab('overview');handoffRef.current=null;setHandoff(null);navigationState.current.ready=false;
   const sequence=++requestSequence.current;setStatusLoading(true);setStatusError('');setSignedOut(false);
   try{const value=connectionStatus(await connectionRequest('status'));if(sequence!==requestSequence.current)return false;setStatus(value);setClientId(value.clientId||'');setReconnectReview(current=>current&&reconnectReviewIsCurrent(value,current)?current:null);return true;}
   catch(e){if(sequence!==requestSequence.current)return false;setStatus(null);setReconnectReview(null);setStatusError((e as Error).message);setSignedOut(e instanceof ConnectionResponseError&&e.status===401);return false;}
   finally{if(sequence===requestSequence.current)setStatusLoading(false);}
  },[]);
- const invalidateStatusRequests=useCallback(()=>{requestSequence.current++;},[]);
+ const invalidateStatusRequests=useCallback(()=>{requestSequence.current++;navigationEpoch.current++;navigationState.current.ready=false;},[]);
  useEffect(()=>{
   // Consume browser-only OAuth redirect state once, after server hydration.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -51,6 +60,15 @@ export default function ConnectionPanel(){
  function reconnect(id:number){if(!status)return;try{setReconnectReview(reviewReconnect(status,id));setError('');setNotice('');accessReview.current?.focus();accessReview.current?.scrollIntoView({block:'start'});}catch(e){setError((e as Error).message);}}
  async function disconnect(id:number){setBusy(true);setError('');try{await connectionRequest('disconnect',{characterId:id});setNotice('Character removed and pending sign-ins cancelled. You can also revoke the app on EVE’s Authorized Applications page.');await reload();}catch(e){setError((e as Error).message);if(e instanceof ConnectionResponseError&&e.status===401)void reload();}finally{setBusy(false);}}
  async function copy(value:string){try{await navigator.clipboard.writeText(value);setNotice('Copied.');}catch{setError('Copy unavailable. Select and copy the value shown.');}}
+ const context=JSON.stringify(status?.characters??[]),callbackEpoch=navigationEpoch.current,callbackSequence=requestSequence.current;
+ const handoffIsCurrent=!handoff||(handoff.context===context&&status?.characters.some(character=>character.characterId===handoff.shortcut.characterId));
+ const seed=handoffIsCurrent?handoff:null;
+ function openOverviewSection(shortcut:OverviewShortcut){
+  const live=navigationState.current,target=overviewDestination(shortcut);
+  if(!target||!live.ready||live.tab!=='overview'||navigationEpoch.current!==callbackEpoch||requestSequence.current!==callbackSequence||JSON.stringify(live.status?.characters??[])!==context||!live.status?.characters.some(character=>character.characterId===shortcut.characterId))return;
+  const next={shortcut:{sectionId:shortcut.sectionId,characterId:shortcut.characterId,view:shortcut.view},target,context,generation:++navigationEpoch.current};
+  handoffRef.current=next;setHandoff(next);setTab(target.destination);
+ }
  const features=status?.corporationFeatures??[];
  const selection={corporation,corporationFeatures};
  const validSelection=features.length===0?corporationFeatures.length===0:corporationFeatures.every(id=>features.some(feature=>feature.id===id));
@@ -58,24 +76,25 @@ export default function ConnectionPanel(){
  return <main className="shell">
   <header><div className="brand"><span className="mark">O</span><span>Opti<span className="muted">EVE</span></span></div><span className="badge">PRIVATE · READ ONLY</span></header>
   <section className="hero"><p className="eyebrow">YOUR OPERATIONS, CONNECTED</p><h1>Your EVE operations,<br/>at a glance.</h1><p className="intro">A private overview of your finances, training and work in progress. Connect your characters and bring the details into the conversation.</p><a className="button secondary" href="/demo">Explore the synthetic manufacturing demo</a></section>
-  <WorkspaceNavigation current={tab} select={setTab}/>
+  <WorkspaceNavigation current={tab} select={selectTab}/>
+  {!handoffIsCurrent&&<p className="overview-state" role="status">Connection selection changed. Open the overview or choose a workspace again.</p>}
   {error&&<div className="alert" role="alert">{error}</div>}{notice&&<div className="notice" role="status">{notice}</div>}
   {statusError&&<div className="alert" role="alert"><p>{statusError}</p>{signedOut&&<a className="button secondary" href="/signin-with-chatgpt?return_to=%2F" target="_top">Sign in with ChatGPT</a>} <button className="small" disabled={statusLoading||busy} onClick={()=>void reload()}>Try again</button></div>}
-  {tab==='training'&&status&&!statusLoading&&<CharacterAnalyticsPanel key={'training-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='clones'&&status&&!statusLoading&&<CloneAnalyticsPanel key={'clones-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='calendar'&&status&&!statusLoading&&<CalendarAnalyticsPanel key={'calendar-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='orders'&&status&&!statusLoading&&<OrderAnalyticsPanel key={'orders-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='market'&&status&&!statusLoading&&<MarketTransactionsPanel key={'market-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='contracts'&&status&&!statusLoading&&<ContractsAnalyticsPanel key={'contracts-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='blueprints'&&status&&!statusLoading&&<BlueprintAnalyticsPanel key={'blueprints-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='inventory'&&status&&!statusLoading&&<InventoryAnalyticsPanel key={'inventory-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='jobs'&&status&&!statusLoading&&<IndustryAnalyticsPanel key={'jobs-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='wallet'&&status&&!statusLoading&&<div key={'wallet-'+JSON.stringify(status.characters)}><WalletAnalyticsPanel characters={status.characters} openConnections={()=>setTab('connections')}/><WalletHistoryPanel characters={status.characters} openConnections={()=>setTab('connections')}/></div>}
-  {tab==='overview'&&status&&!statusLoading&&<OverviewPanel key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='corporation'&&status&&!statusLoading&&<CorporationPanel key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='reputation'&&status&&!statusLoading&&<CharacterPanel key={'reputation-'+JSON.stringify(status.characters)} mode="reputation" characters={status.characters} openConnections={()=>setTab('connections')}/>}
-  {tab==='industry'&&status&&!statusLoading&&<CharacterPanel key={'industry-'+JSON.stringify(status.characters)} mode="industry" characters={status.characters} openConnections={()=>setTab('connections')}/> }
-  {tab==='manufacturing'&&status&&!statusLoading&&<ManufacturingPanel key={'manufacturing-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>setTab('connections')}/>}
+  {tab==='training'&&status&&!statusLoading&&handoffIsCurrent&&<CharacterAnalyticsPanel key={'training-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='clones'&&status&&!statusLoading&&<CloneAnalyticsPanel key={'clones-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='calendar'&&status&&!statusLoading&&<CalendarAnalyticsPanel key={'calendar-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='orders'&&status&&!statusLoading&&handoffIsCurrent&&<OrderAnalyticsPanel key={'orders-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='market'&&status&&!statusLoading&&<MarketTransactionsPanel key={'market-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='contracts'&&status&&!statusLoading&&handoffIsCurrent&&<ContractsAnalyticsPanel key={'contracts-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} initialEntity={seed?.target.entity} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='blueprints'&&status&&!statusLoading&&<BlueprintAnalyticsPanel key={'blueprints-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='inventory'&&status&&!statusLoading&&<InventoryAnalyticsPanel key={'inventory-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='jobs'&&status&&!statusLoading&&handoffIsCurrent&&<IndustryAnalyticsPanel key={'jobs-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} initialEntity={seed?.target.entity} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='wallet'&&status&&!statusLoading&&handoffIsCurrent&&<div key={'wallet-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')}><WalletAnalyticsPanel initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/><WalletHistoryPanel initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/></div>}
+  {tab==='overview'&&status&&!statusLoading&&<OverviewPanel onOpenSection={navigationState.current.ready?openOverviewSection:undefined} key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='corporation'&&status&&!statusLoading&&handoffIsCurrent&&<CorporationPanel key={JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} initialView={seed?.target.corporationView} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='reputation'&&status&&!statusLoading&&<CharacterPanel key={'reputation-'+JSON.stringify(status.characters)} mode="reputation" characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='industry'&&status&&!statusLoading&&<CharacterPanel key={'industry-'+JSON.stringify(status.characters)} mode="industry" characters={status.characters} openConnections={()=>selectTab('connections')}/> }
+  {tab==='manufacturing'&&status&&!statusLoading&&<ManufacturingPanel key={'manufacturing-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab!=='connections'&&statusLoading&&<p className="overview-state" role="status">Loading connection status…</p>}
   {tab==='connections'&&<div className="grid"><section className="panel"><div className="section-title"><span className="step">01</span><h2>{status?.configured?'EVE application ready':'Register your EVE application'}</h2></div>
    <p>This one-time setup gives your private connector permission to use EVE’s official sign-in.</p>
