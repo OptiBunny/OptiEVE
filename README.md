@@ -1,6 +1,6 @@
 # OptiEVE
 
-A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-four tools through `/mcp`:
+A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes the following tools through `/mcp`:
 
 | Tool | Data returned |
 | --- | --- |
