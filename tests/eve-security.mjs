@@ -13,7 +13,8 @@ vm.runInNewContext(ts.transpileModule(readFileSync('app/lib/corporation-data.ts'
 const requestBodyModule={exports:{}};
 vm.runInNewContext(ts.transpileModule(readFileSync('app/lib/request-body.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{module:requestBodyModule,exports:requestBodyModule.exports,TextDecoder,Uint8Array});
 const sqlite=new DatabaseSync(':memory:');
-sqlite.exec(`CREATE TABLE eve_settings(user_id TEXT PRIMARY KEY,client_id TEXT NOT NULL);CREATE TABLE eve_oauth_states(state_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,encrypted TEXT NOT NULL,expires INTEGER NOT NULL);CREATE TABLE eve_connections(user_id TEXT NOT NULL,character_id INTEGER NOT NULL,name TEXT NOT NULL,corporation_id INTEGER NOT NULL,scopes TEXT NOT NULL,encrypted TEXT NOT NULL,expires INTEGER NOT NULL,refresh_lock TEXT,refresh_until INTEGER,PRIMARY KEY(user_id,character_id));`);
+sqlite.exec('PRAGMA foreign_keys=ON;');
+for(const migration of JSON.parse(readFileSync('drizzle/meta/_journal.json','utf8')).entries) sqlite.exec(readFileSync('drizzle/'+migration.tag+'.sql','utf8'));
 const dbHooks={afterFirst:null,beforeRun:null,afterRun:null};
 const env={EVE_SITE_ORIGIN:'https://example.chatgpt.site',EVE_TOKEN_KEY:Buffer.from(webcrypto.getRandomValues(new Uint8Array(32))).toString('base64'),DB:{prepare(sql){return {bind(...args){return {async first(){const row=sqlite.prepare(sql).get(...args)||null;await dbHooks.afterFirst?.(sql,args,row);return row;},async all(){return {results:sqlite.prepare(sql).all(...args)};},async run(){await dbHooks.beforeRun?.(sql,args);const result={meta:sqlite.prepare(sql).run(...args)};await dbHooks.afterRun?.(sql,args,result);return result;}};}};}}};
 const clientId='0123456789abcdef0123456789abcdef';
@@ -48,7 +49,7 @@ const fetcher=async(url,init)=>{
 };
 const fixtureModule={exports:{}};
 const sandbox={module:fixtureModule,exports:fixtureModule.exports,require:n=>{if(n==='cloudflare:workers')return {env};if(n==='./character-data')return catalog;if(n==='./corporation-data')return corporationModule.exports;throw new Error(n);},crypto:webcrypto,fetch:fetcher,TextEncoder,TextDecoder,URL,URLSearchParams,Response,Request,AbortSignal,Uint8Array,atob,btoa,console};
-vm.runInNewContext(code+'\nmodule.exports.test={encrypt,decrypt,verifyJwt};',sandbox);
+vm.runInNewContext(code+'\nmodule.exports.test={encrypt,decrypt,verifyJwt,boundedJson};',sandbox);
 const api=fixtureModule.exports;
 const secret={secret:'private-token'},cipher=await api.test.encrypt(secret,'token:user-a:12345');
 assert(!cipher.includes('private-token'));assert.equal((await api.test.decrypt(cipher,'token:user-a:12345')).secret,'private-token');
@@ -149,8 +150,10 @@ callbackFailure=null;assert.equal((await callbackModule.exports.GET(callbackRequ
 assert.equal((await callbackModule.exports.GET(new Request('https://example.chatgpt.site/eve/callback?error=access_denied&error_description=secret-code',{headers:{'oai-authenticated-user-id':'user-a'}}))).headers.get('location'),'/?eve=cancelled');
 callbackFailure=new api.EveError('secret-code secret-state',502,'token_request',400);assert.equal((await callbackModule.exports.GET(callbackRequest)).headers.get('location'),'/?eve=failed&reason=token_request&http=400');
 callbackFailure=new api.EveError('secret-code secret-state',502,'secret-state',999999);assert.equal((await callbackModule.exports.GET(callbackRequest)).headers.get('location'),'/?eve=failed&reason=service');
+const historyToolsModule={exports:{}};
+vm.runInNewContext(ts.transpileModule(readFileSync('app/lib/wallet-history-tools.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{module:historyToolsModule,exports:historyToolsModule.exports,require:name=>{if(name==='./eve')return api;if(name==='./wallet-history')return {runWalletHistory:()=>{throw new Error('History transport behavior is verified by the dedicated MCP tests.');}};throw new Error(name);}});
 const mcpModule={exports:{}};let mcpFetchCount=0;
-vm.runInNewContext(ts.transpileModule(readFileSync('app/mcp/route.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{module:mcpModule,exports:mcpModule.exports,require:n=>n==='../lib/eve'?api:n==='../lib/character-data'?catalog:n==='../lib/corporation-data'?corporationModule.exports:n==='../lib/request-body'?requestBodyModule.exports:n==='../lib/manufacturing-tools'?{manufacturingToolset:[],manufacturingInstructions:'Synthetic isolated EVE regression',callManufacturingTool:()=>{throw new Error('Manufacturing integration belongs to mcp-security tests.');}}:null,Request,Response,AbortSignal,TextEncoder,fetch:async(url,init)=>{mcpFetchCount++;assert.equal(init.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://attacker.example/collect'}});}});
+vm.runInNewContext(ts.transpileModule(readFileSync('app/mcp/route.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,{module:mcpModule,exports:mcpModule.exports,require:n=>n==='../lib/eve'?api:n==='../lib/character-data'?catalog:n==='../lib/corporation-data'?corporationModule.exports:n==='../lib/request-body'?requestBodyModule.exports:n==='../lib/wallet-history-tools'?historyToolsModule.exports:n==='../lib/manufacturing-tools'?{manufacturingToolset:[],manufacturingInstructions:'Synthetic isolated EVE regression',callManufacturingTool:()=>{throw new Error('Manufacturing integration belongs to mcp-security tests.');}}:null,Request,Response,AbortSignal,TextEncoder,fetch:async(url,init)=>{mcpFetchCount++;assert.equal(init.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://attacker.example/collect'}});}});
 const marketReply=await mcpModule.exports.POST(new Request('https://example.chatgpt.site/mcp',{method:'POST',headers:{'oai-authenticated-user-id':'user-a'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'public_market',arguments:{regionId:10000002,typeId:34}}})}));
 const marketResult=(await marketReply.json()).result;assert.equal(marketResult.isError,true);assert(marketResult.content[0].text.includes('HTTP 302'));assert.equal(mcpFetchCount,1);assert(!marketResult.content[0].text.includes('attacker'));
 // Force lifecycle interleavings without network calls, timers, or real credentials.
@@ -800,5 +803,34 @@ assert.equal((await reconnectPost({reconnectCharacterId:12345},{origin:'https://
 const reconnectRouteReply=await reconnectPost({reconnectCharacterId:12345});assert.equal(reconnectRouteReply.status,200);assert.equal(reconnectRouteReply.headers.get('cache-control'),'private, no-store');
 const reconnectRouteUrl=new URL((await reconnectRouteReply.json()).url);assert.deepEqual(reconnectRouteUrl.searchParams.get('scope').split(' '),Array.from(charScopes));
 await api.cancelConnect('user-a',reconnectRouteUrl.searchParams.get('state'));
+// New history migrations leave old reads working. A normal refresh preserves
+// its lifecycle epoch; successful replacement rotates it atomically.
+const historyEpochBeforeRefresh=connection().history_epoch;assert.match(historyEpochBeforeRefresh,/^[A-Za-z0-9_-]{43}$/);
+sqlite.prepare('UPDATE eve_connections SET expires=0 WHERE user_id=? AND character_id=?').run('user-a',12345);
+await readOrders();assert.equal(connection().history_epoch,historyEpochBeforeRefresh);
+const historyReconnect=await api.startReconnect('user-a',12345);
+await api.finishConnect('user-a','synthetic-code',new URL(historyReconnect.url).searchParams.get('state'));
+assert.notEqual(connection().history_epoch,historyEpochBeforeRefresh);
+// History-only reads enforce a byte ceiling while other read callers retain
+// their existing response contract. The bound is applied before JSON parsing.
+const historyJournalUrl='https://esi.evetech.net/characters/12345/wallet/journal?page=1';
+fetchOverrides.set(historyJournalUrl,()=>new Response('[]',{headers:{'x-pages':'1'}}));
+assert.equal((await api.readEve('user-a',{characterId:12345,entity:'character',dataset:'wallet_journal'},undefined,{maxResponseBytes:10})).data.length,0);
+fetchOverrides.set(historyJournalUrl,()=>new Response('[1234567890]',{headers:{'x-pages':'1'}}));
+await assert.rejects(api.readEve('user-a',{characterId:12345,entity:'character',dataset:'wallet_journal'},undefined,{maxResponseBytes:10}),error=>error.status===502);
+assert.equal((await api.readEve('user-a',{characterId:12345,entity:'character',dataset:'wallet_journal'})).data[0],1234567890);
+await assert.rejects(api.test.boundedJson(new Response('[]',{headers:{'content-length':'1000'}}),10),error=>error.status===502);
+assert.deepEqual(Array.from(await api.test.boundedJson(new Response('["é"]'),6)),['é']);
+await assert.rejects(api.test.boundedJson(new Response(new Uint8Array([0xc3,0x28])),10),error=>error.status===502);
+let historyChunkCancelled=false;
+const oversizedHistory=new Response(new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(11));},cancel(){historyChunkCancelled=true;}}));
+await assert.rejects(api.test.boundedJson(oversizedHistory,10),error=>error.status===502);assert.equal(historyChunkCancelled,true);
+let historyReadStarted;const historyBodyReady=new Promise(resolve=>{historyReadStarted=resolve;});let historyBodyCancelled=false;
+const historyAbort=new AbortController(),stalledHistory=new Response(new ReadableStream({pull(){historyReadStarted();},cancel(){historyBodyCancelled=true;}}));
+const pendingHistoryBody=api.test.boundedJson(stalledHistory,10,historyAbort.signal),rejectedHistoryBody=assert.rejects(pendingHistoryBody,error=>error.status===502);
+await historyBodyReady;historyAbort.abort();await rejectedHistoryBody;assert.equal(historyBodyCancelled,true);
+sqlite.prepare('INSERT INTO eve_wallet_history(user_id,character_id,generation,enabled,retention_days,encrypted) VALUES(?,?,?,?,?,?)').run('user-a',12345,'synthetic-generation',1,90,'synthetic-history-ciphertext');
+await api.disconnect('user-a',12345);assert.equal(sqlite.prepare('SELECT count(*) AS n FROM eve_wallet_history').get().n,0);
+fetchOverrides.clear();
 sqlite.close();
 console.log('PASS: encrypted user binding/tamper rejection; signed JWT checks; user-bound one-time OAuth state; no token disclosure; 39-character-scope read-only authorization; optional corporation consent and scope isolation; current corporation reads and role failures; character read ownership/scope checks before refresh; strict endpoint/argument allowlists; object/number/array data; page/mail/calendar/project cursor pagination; lookup-only POST; concurrent refresh lock and rotation; auth/CSRF/disconnect; claimed-state replay/disconnect/expiry/cleanup interleavings; malformed token response preservation; safe invalid-grant recovery; refresh/disconnect/reconnect races; validated ESI page and transaction cursors; safe numeric cooldown advice; cache snapshot metadata; cancellation before refresh and between chained corporation reads; exact supported-subset reconnect; encrypted character/scope binding; callback and refresh grant equality; stale-scope atomic commit; reconnect route exclusivity and legacy-flow compatibility.');

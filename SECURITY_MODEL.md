@@ -97,6 +97,9 @@ and MCP transport. Its input limit is 32,000 bytes. Legacy batches allow at most
 eight messages and a four MiB aggregate response, with later handlers withheld
 when the remaining output budget is insufficient. Do not mistake that batch
 budget for a universal upstream or single-tool response cap.
+History mutations must be standalone MCP requests: batches reject them before
+execution so a committed change cannot lose its confirmation to the read-response
+budget. Read-only history status and reports remain batch-compatible.
 
 Request-body helpers bound retained bytes and discard overflow. Browser API
 rejection paths drain unread bodies to preserve Windows local-worker connection
@@ -130,21 +133,48 @@ checks into a promise of platform-wide transactionality or availability.
 
 ### Retained state and private results
 
-The current database has three application tables:
+The current database has four application tables:
 
 | Table | Retained data |
 | --- | --- |
 | `eve_settings` | User association and Client ID. |
 | `eve_oauth_states` | State hash, user association, encrypted flow and expiry. |
-| `eve_connections` | User/character/corporation association, display name, scopes, encrypted token payload, expiry and refresh-lock metadata. |
+| `eve_connections` | User/character/corporation association, display name, scopes, encrypted token payload, expiry, refresh-lock metadata and history lifecycle epoch. |
+| `eve_wallet_history` | User/character association, generation, enabled state, retention choice and an encrypted bounded financial-history payload. Composite foreign key cascades deletion with the connection. |
 
 The Client ID, identities, names, scope list and expiry/lock metadata are plaintext
-configuration or metadata. There is no application table for orders, assets,
-wallet history or manufacturing results. Expired OAuth state is unusable but
-cleanup is opportunistic; logical expiry is not guaranteed immediate physical
-erasure. Disconnect removes the selected connection and the user's pending
-sign-ins, but does not remove the saved Client ID, revoke the provider grant,
-erase earlier chat results or govern backup retention.
+configuration or metadata. Orders, assets and manufacturing results are not
+archived. Optional character-wallet history is disabled by default and captured
+only on explicit request. It retains minimal journal IDs, UTC timestamps, amounts
+and fixed categories plus bounded capture evidence, encrypted with AES-GCM and
+separate user/character-associated data. Descriptions, counterparties, reasons,
+balances and raw responses are excluded. A database operator with the runtime
+key can still decrypt this history.
+
+History mutations use a generation compare-and-swap and the current connection
+lifecycle epoch. Disabling, erasing, disconnecting or replacing authorization
+prevents a previously started capture from restoring old state. Ordinary token
+refresh does not replace that epoch. Reads require the owned connection and
+saved wallet grant; status and pause/erase remain available without that grant,
+with financial output redacted. This is access to a retained personal archive,
+not a fresh provider authorization probe. Corporation history is not retained.
+
+Each manual capture accepts at most four pages and 10,000 rows; the encrypted
+payload accepts at most 10,000 retained events and one MiB before encryption.
+Malformed/conflicting data or a full store fail without a partial commit. Reports
+use exact-decimal cash flow and preserve missing amounts, gaps and source
+freshness; they never establish complete calendar coverage or realized profit.
+Retention choices are 30, 90 or 365 days. Reads filter expired events, and history
+mutations prune them physically; no scheduled collector or cleanup is installed.
+Pause retains events. Erase clears the payload and disables collection.
+
+Expired OAuth state is unusable but cleanup is opportunistic; logical expiry is
+not guaranteed immediate physical erasure. Disconnect removes the selected
+connection, its history row and the user's pending sign-ins, but does not remove
+the saved Client ID, revoke the provider grant, erase earlier chat results or
+govern backup retention. The additive history migration preserves prior
+authorization rows and starts with no history enabled. Applied migrations remain
+immutable; a Worker rollback does not undo schema changes.
 
 Dashboard selections and results are held in memory, with clearing on selection
 changes, refresh and unmount. This is not a secure-memory erasure guarantee.

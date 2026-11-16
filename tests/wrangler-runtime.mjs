@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -115,7 +116,7 @@ try {
     rules: configured.rules,
     assets: { directory: assets },
     d1_databases: [{ binding: 'DB', database_name: 'synthetic-runtime-test', database_id: '00000000-0000-4000-8000-000000000000' }],
-    vars: { EVE_SITE_ORIGIN: origin },
+    vars: { EVE_SITE_ORIGIN: origin, EVE_TOKEN_KEY: randomBytes(32).toString('base64') },
   }));
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:EVE_|CF_|CLOUDFLARE_|SITES_|WRANGLER_|MINIFLARE_|OPENAI_|GITHUB_|GH_)|^NODE_OPTIONS$/i.test(name)));
   Object.assign(env, {
@@ -125,7 +126,10 @@ try {
     MINIFLARE_REGISTRY_PATH: join(runtime, 'registry'),
   });
   stage = 'temporary database setup';
-  await run(['--import', './scripts/sites-env.mjs', './node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'DB', '--local', '--config', config, '--persist-to', persist, '--file', join(root, 'drizzle', '0000_gorgeous_guardian.sql')], env);
+  for (const migration of JSON.parse(readFileSync(join(root, 'drizzle', 'meta', '_journal.json'), 'utf8')).entries) {
+    check(/^[a-zA-Z0-9_]+$/.test(migration.tag), 'Unsafe migration name');
+    await run(['--import', './scripts/sites-env.mjs', './node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'DB', '--local', '--config', config, '--persist-to', persist, '--file', join(root, 'drizzle', `${migration.tag}.sql`)], env);
+  }
 
   const listener = createServer();
   await new Promise((resolveListen, rejectListen) => { listener.once('error', rejectListen); listener.listen(0, '127.0.0.1', resolveListen); });
@@ -208,7 +212,7 @@ try {
   check(initialized.serverInfo.name === 'OptiEVE', 'Unexpected MCP server identity');
   check(initialized.instructions.includes('assess_manufacturing') && initialized.instructions.includes('No game writes'), 'Manufacturing guidance must reach the real MCP client');
   const toolNames = (await rpc('tools/list')).result.tools.map(tool => tool.name).sort();
-  check(JSON.stringify(toolNames) === JSON.stringify(['connection_status', 'public_market', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing', 'manufacturing_compare', 'manufacturing_plan'].sort()), 'Unexpected MCP tool catalog');
+  check(JSON.stringify(toolNames) === JSON.stringify(['connection_status', 'public_market', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing', 'manufacturing_compare', 'manufacturing_plan', 'wallet_history_status', 'wallet_history_report', 'configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'].sort()), 'Unexpected MCP tool catalog');
   check((await rpc('tools/call', { name: 'connection_status', arguments: {} })).result.isError === true, 'Missing MCP identity must be rejected');
   const connection = (await rpc('tools/call', { name: 'connection_status', arguments: {} }, true)).result;
   check(!connection.isError && JSON.parse(connection.content[0].text).characters.length === 0, 'Synthetic MCP status must be empty');
@@ -448,7 +452,36 @@ try {
   }
   expectStatus(rsc, 200);
   check(rsc.headers.get('content-type')?.includes('text/x-component'), 'Expected a React server component response');
-  console.log(`PASS: actual package start; 10 rejected-body request sequences without retries; streamed/oversized requests; overview authorization/cache boundaries; empty synthetic account; MCP manufacturing catalog/requirements without external data, HTML, ${assetUrls.length} assets and React server components`);
+
+  stage = 'private history migrations, encryption and standalone controls';
+  // This synthetic connection is deliberately unable to call EVE. History
+  // settings/report operations use local storage only; no capture is enabled
+  // implicitly by loading status or requesting a report.
+  const seed = join(temporary, 'history-synthetic.sql');
+  writeFileSync(seed, `INSERT INTO eve_connections(user_id,character_id,name,corporation_id,scopes,encrypted,expires) VALUES('synthetic-runtime-test',90000001,'Synthetic history pilot',98000001,'["esi-wallet.read_character_wallet.v1"]','synthetic-invalid-token',0);`);
+  await run(['--import', './scripts/sites-env.mjs', './node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'DB', '--local', '--config', config, '--persist-to', persist, '--file', seed], env);
+  const history = async input => {
+    const response = await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, ...input }), { ...identity, origin });
+    expectStatus(response, 200); check(/no-store/.test(response.headers.get('cache-control')), 'History must not be cached');
+    return JSON.parse(response.text);
+  };
+  const initialHistory = await history({ operation: 'status' });
+  check(initialHistory.settings.enabled === false && initialHistory.report.totals === null, 'Migration must start opted out with unknown totals');
+  expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'capture' }), { ...identity, origin }), 409);
+  expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'status' }), { 'oai-authenticated-user-id': 'synthetic-other-user', origin }), 404);
+  const enabled = await history({ operation: 'configure', enabled: true, retentionDays: 365 });
+  check(enabled.settings.enabled === true && enabled.report.entries === 0, 'Enable must save settings without collecting');
+  const savedReport = (await rpc('tools/call', { name: 'wallet_history_report', arguments: { characterId: 90000001, days: 365 } }, true)).result;
+  check(!savedReport.isError && JSON.parse(savedReport.content[0].text).report.totals === null, 'MCP must read encrypted empty history without EVE access');
+  const paused = await history({ operation: 'configure', enabled: false });
+  check(paused.settings.enabled === false && paused.settings.retentionDays === 365, 'Pause must preserve server retention');
+  const mutationBatch = await post('/mcp', JSON.stringify([{ jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'clear_wallet_history', arguments: { characterId: 90000001, confirm: 'delete_wallet_history' } } }]), identity);
+  check(JSON.parse(mutationBatch.text)[0].error.code === -32600, 'History mutations must be rejected in batches');
+  const erased = await history({ operation: 'clear', confirm: 'delete_wallet_history' });
+  check(erased.settings.enabled === false && erased.lastCapture === null && erased.report.totals === null, 'Erase must leave no financial report and collection off');
+  expectStatus(await post('/api/eve/disconnect', JSON.stringify({ characterId: 90000001 }), { ...identity, origin }), 200);
+  expectStatus(await post('/api/eve/wallet-history', JSON.stringify({ characterId: 90000001, operation: 'status' }), { ...identity, origin }), 404);
+  console.log(`PASS: actual package start; 10 rejected-body request sequences without retries; streamed/oversized requests; overview authorization/cache boundaries; empty synthetic account; MCP manufacturing catalog/requirements; wallet history migrations/encryption/off-by-default/pause/erase/ownership/batch controls without external data; HTML, ${assetUrls.length} assets and React server components`);
 } catch (error) {
   console.error(`FAIL: ${stage}: ${error instanceof Failure ? error.message : 'validation operation could not complete'}`);
   process.exitCode = 1;

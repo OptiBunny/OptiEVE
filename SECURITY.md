@@ -17,7 +17,9 @@ Treat HTTP/MCP arguments, OAuth callbacks, EVE/player-authored content, cache an
 pagination metadata, external catalogs and local export/sync inputs as untrusted
 until validated. Selecting a connection or reading a record does not authorize
 broader access. Read-only refers to EVE game state: connection setup, reconnect,
-token refresh and disconnect necessarily change local authorization state.
+token refresh and disconnect necessarily change local authorization state. Optional
+wallet-history configuration, capture and erasure also change private application
+storage and must carry accurate MCP write/destructive annotations.
 
 ## Security review rules
 
@@ -42,6 +44,8 @@ token refresh and disconnect necessarily change local authorization state.
    connector tools can return sensitive fields that summary dashboards omit.
    Review both paths. No new persistent account history, browser storage, private
    fixtures or background collection should appear as an incidental feature.
+   Optional character-wallet history requires explicit opt-in and manual capture;
+   verify its retention, encryption, owner binding, lifecycle races and erase path.
 5. **Validate evidence before using it.** Follow row semantics, numeric precision,
    source identity, pagination/cursors, duplicate/conflicting IDs, catalog mapping,
    cache metadata and final freshness. Missing or denied data is unknown, not zero.
@@ -80,7 +84,8 @@ token refresh and disconnect necessarily change local authorization state.
 - Use the guarded one-way sync and the public-source packager. A source hash match
   does not update dependencies, migrations or a running deployment. Verify those
   separately when application code changes and deployment is authorized.
-- Disconnect removes the stored connection and cancels pending sign-ins; it does
+- Disconnect removes the stored connection, cascades its optional wallet history
+  deletion and cancels pending sign-ins; it does
   not revoke EVE's grant, erase chat history, or delete external backups. Provider
   revocation and incident-specific key recovery are separate operator actions.
 

@@ -3,6 +3,7 @@ import {buildCharacterRequest,characterReadInputSchema,type CharacterReadArgs} f
 import {buildCorporationRequest,corporationReadInputSchema,type CorporationReadArgs} from '../lib/corporation-data';
 import {readRequestBody,RequestBodyTooLargeError} from '../lib/request-body';
 import {manufacturingToolset,callManufacturingTool,manufacturingInstructions} from '../lib/manufacturing-tools';
+import {walletHistoryToolset,callWalletHistoryTool,walletHistoryInstructions} from '../lib/wallet-history-tools';
 export const dynamic='force-dynamic';
 const MAX_BATCH_ITEMS=8,MAX_BATCH_RESPONSE_BYTES=4*1024*1024;
 const privateHeaders={'Cache-Control':'private, no-store','Vary':'oai-authenticated-user-id, Origin','X-Content-Type-Options':'nosniff'};
@@ -13,8 +14,8 @@ const toolset=[
  {name:'read_private_data',description:'Read one page of authorized character or corporation orders, assets, wallet transactions or journal. Call connection status first for characterId. Wallet transactions use fromId cursor; other paginated datasets use page. For corporation wallet use division 1–7. Follow returned pagination to avoid incomplete totals. Data is cached by CCP; retain timestamps. Do not infer realized profit from asking prices alone. Consider the user\'s goals, locations, fees, transaction history, and data completeness when interpreting results.',inputSchema:{type:'object',required:['characterId','entity','dataset'],properties:{characterId:{type:'integer',minimum:1},entity:{type:'string',enum:['character','corporation']},dataset:{type:'string',enum:['orders','assets','wallet_transactions','wallet_journal']},page:{type:'integer',minimum:1,maximum:500},division:{type:'integer',minimum:1,maximum:7},fromId:{type:'integer',minimum:1}},additionalProperties:false}},
  {name:'resolve_names',description:'Resolve up to 200 public EVE type, character, corporation, system or station IDs to names. Unknown or private structure IDs may not resolve. No credentials sent.',inputSchema:{type:'object',required:['ids'],properties:{ids:{type:'array',minItems:1,maxItems:200,items:{type:'integer',minimum:1}}},additionalProperties:false}},
  {name:'public_market',description:'Read one page of public regional orders for an item. Filter returned orders by location when comparing station prices and exclude your own IDs. Public books omit some structure orders. Lowest quotes do not establish executable prices for an entire inventory.',inputSchema:{type:'object',required:['regionId','typeId'],properties:{regionId:{type:'integer',minimum:1},typeId:{type:'integer',minimum:1},side:{type:'string',enum:['all','buy','sell']},page:{type:'integer',minimum:1,maximum:500}},additionalProperties:false}}
- ,...manufacturingToolset
-].map(t=>({...t,annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:true}}));
+ ,...manufacturingToolset,...walletHistoryToolset
+].map(t=>({...t,annotations:'annotations' in t?t.annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:true}}));
 class ToolError extends Error {}
 function int(v:unknown,max=Number.MAX_SAFE_INTEGER){if(typeof v!=='number'||!Number.isSafeInteger(v)||v<1||v>max)throw new ToolError('Invalid numeric argument.');return v;}
 async function publicEsi(path:string,body?:unknown,page?:number){
@@ -120,7 +121,7 @@ async function dispatch(message:unknown,req:Request,inBatch:boolean){
  if(message.method==='initialize'){
   if(inBatch)return failure(requestId,-32600,'Initialization must be sent as a single request');
   if(typeof params.protocolVersion!=='string'||!object(params.capabilities)||!object(params.clientInfo)||typeof params.clientInfo.name!=='string'||typeof params.clientInfo.version!=='string')return invalid();
-  return result({protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'OptiEVE',version:'1.1.0'},instructions:manufacturingInstructions});
+  return result({protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'OptiEVE',version:'1.1.0'},instructions:manufacturingInstructions+' '+walletHistoryInstructions});
  }
  if(message.method==='ping')return result({});
  if(message.method==='tools/list')return params.cursor!==undefined?invalid('Unknown tool-list cursor'):result({tools:toolset});
@@ -129,6 +130,9 @@ async function dispatch(message:unknown,req:Request,inBatch:boolean){
  if(!tool)return invalid('Unknown tool');
  const args=params.arguments===undefined?{}:params.arguments;
  if(!matches(args,tool.inputSchema as Schema))return invalid('Arguments do not match this tool\'s input schema.');
+ // A batch can discard a result after dispatch when its output budget fills.
+ // Local history mutations must keep their own unambiguous completion response.
+ if(inBatch&&walletHistoryToolset.some(item=>item.name===tool.name&&!item.annotations.readOnlyHint))return failure(requestId,-32600,'Wallet history changes must be sent as a single request.');
  const a=args as ObjectValue;
  if(tool.name==='read_character_data'){
   try{buildCharacterRequest(a as CharacterReadArgs);}catch{return invalid('Supply the parameters accepted by this character dataset.');}
@@ -146,6 +150,7 @@ async function dispatch(message:unknown,req:Request,inBatch:boolean){
   else if(tool.name==='read_corporation_data')data=await readCorporationData(user,a as CorporationReadArgs);
   else if(tool.name==='resolve_names')data=await publicEsi('/universe/names',(a.ids as unknown[]).map(value=>int(value)));
   else if(tool.name==='public_market'){const region=int(a.regionId),type=int(a.typeId),page=int(a.page??1,500),side=a.side??'all';data=await publicEsi(`/markets/${region}/orders?type_id=${type}&order_type=${side}&page=${page}`,undefined,page);}
+  else if(walletHistoryToolset.some(item=>item.name===tool.name))data=await callWalletHistoryTool(tool.name,user,a,req.signal);
   else data=await callManufacturingTool(tool.name,user,a,req.signal);
   return result({content:[{type:'text',text:JSON.stringify(data)}]});
  }catch(error){
