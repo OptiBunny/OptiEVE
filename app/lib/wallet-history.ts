@@ -85,6 +85,7 @@ function observedDifference(current: WalletActivityTotals, previous: WalletActiv
   return { incomingISK: difference('incomingISK'), outgoingISK: difference('outgoingISK'), netISK: difference('netISK') };
 }
 function view(characterId: number, owner: WalletHistoryOwner, payload: Payload, range: WalletHistoryReportDays, at: number, message: string, comparePrevious = false): WalletHistoryView {
+  const observationsAvailable = owner.scopes.includes(WALLET_HISTORY_SCOPE);
   const settings = { enabled: owner.record?.enabled ?? false, retentionDays: owner.record?.retentionDays ?? 90 };
   const saved = retained(payload, settings.retentionDays, at), currentStart = at - range * DAY;
   // Only explicitly requested comparisons use exact adjacent intervals. Preserve
@@ -121,7 +122,7 @@ function view(characterId: number, owner: WalletHistoryOwner, payload: Payload, 
     };
   }
   return {
-    characterId, generatedAt: new Date(at).toISOString(), status: !settings.enabled ? 'disabled' : events.length ? 'partial' : 'empty', message, settings,
+    characterId, generatedAt: new Date(at).toISOString(), observationsAvailable, status: !observationsAvailable ? 'needs_permission' : !settings.enabled ? 'disabled' : events.length ? 'partial' : 'empty', message, settings,
     report: { days: range, ...summary, totals: events.length ? summary.totals : null, earliest, latest,
       daily: [...daily].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, ...walletActivityProject(value) })),
       categories: [...categories].sort(([a], [b]) => a.localeCompare(b)).map(([id, value]) => ({ id, label: walletActivityCategoryLabels[id], ...walletActivityProject(value) })),

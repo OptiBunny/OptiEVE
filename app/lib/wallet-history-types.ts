@@ -25,7 +25,10 @@ export type WalletHistoryCapture = {
 export type WalletHistoryView = {
   characterId: number;
   generatedAt: string;
-  status: 'disabled' | 'ready' | 'partial' | 'empty';
+  /** False when the current saved wallet grant withholds financial observations.
+   * Configuration and permitted local maintenance remain available. */
+  observationsAvailable: boolean;
+  status: 'needs_permission' | 'disabled' | 'ready' | 'partial' | 'empty';
   message: string;
   settings: { enabled: boolean; retentionDays: WalletHistoryDays };
   report: {
