@@ -315,6 +315,70 @@ for(const read of readTransactions){
  fetchOverrides.set(transactionsEndpoint,Response.json([]));
  const empty=await read();assert.equal(Object.hasOwn(empty,'nextFromId')?empty.nextFromId:empty.pagination.nextFromId,null);
 }
+
+// Independent transport regressions: raw boundary rows survive, cursor metadata advances or stops.
+{
+const cursorOriginalScopes=sqlite.prepare('SELECT scopes FROM eve_connections WHERE user_id=? AND character_id=?').get('user-a',12345).scopes;
+try{
+sqlite.prepare('UPDATE eve_connections SET scopes=? WHERE user_id=? AND character_id=?').run(JSON.stringify([...charScopes,...api.scopes.corporation]),'user-a',12345);
+const cursorCases = [
+ ['initial empty',undefined,[],null],
+ ['initial singleton',undefined,[789],789],
+ ['initial multi-row',undefined,[789,700],700],
+ ['terminal singleton',789,[789],null],
+ ['terminal duplicate boundary',789,[789,789],null],
+ ['inclusive boundary and older',789,[789,788],788],
+ ['older row without boundary',789,[788],788],
+ ['upward-only result',789,[790],null],
+ ['upward and older preserve raw behavior',789,[790,788],788],
+ ['duplicate older rows preserved',789,[789,788,788],788],
+ ['unsorted older IDs keep existing minimum convention',789,[789,787,788],787],
+ ['initial minimum safe ID',undefined,[1],1],
+ ['minimum safe terminal',1,[1],null],
+ ['maximum safe terminal',Number.MAX_SAFE_INTEGER,[Number.MAX_SAFE_INTEGER],null],
+ ['maximum safe advances exactly',Number.MAX_SAFE_INTEGER,[Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER-1],Number.MAX_SAFE_INTEGER-1],
+];
+const cursorReaders = [
+ {name:'legacy-character',endpoint:'https://esi.evetech.net/characters/12345/wallet/transactions',read:fromId=>api.readEve('user-a',{characterId:12345,entity:'character',dataset:'wallet_transactions',...(fromId===undefined?{}:{fromId})}),next:value=>value.nextFromId,note:value=>value.pagination},
+ {name:'legacy-corporation',endpoint:'https://esi.evetech.net/corporations/999/wallets/3/transactions',read:fromId=>api.readEve('user-a',{characterId:12345,entity:'corporation',division:3,dataset:'wallet_transactions',...(fromId===undefined?{}:{fromId})}),next:value=>value.nextFromId,note:value=>value.pagination},
+ {name:'catalog-character',endpoint:'https://esi.evetech.net/characters/12345/wallet/transactions',read:fromId=>api.readCharacterData('user-a',{characterId:12345,dataset:'wallet_transactions',...(fromId===undefined?{}:{parameters:{fromId}})}),next:value=>value.pagination.nextFromId,note:value=>value.notes},
+];
+let cursorPassed=0;const cursorFailures=[];
+async function cursorCheck(label,run){try{await run();cursorPassed++;}catch(error){cursorFailures.push({label,message:error.message});}}
+for(const reader of cursorReaders){
+ for(const [name,fromId,ids,expected]of cursorCases)await cursorCheck(reader.name+': '+name,async()=>{
+  const rows=ids.map((id,index)=>({transaction_id:id,quantity:index+1,raw_marker:'SYNTHETIC_UNCHANGED_'+index}));let reads=0;
+  const endpoint=reader.endpoint+(fromId===undefined?'':'?from_id='+fromId);
+  fetchOverrides.set(endpoint,()=>{reads++;return Response.json(rows);});
+  try{const value=await reader.read(fromId);assert.equal(reader.next(value),expected);assert.deepEqual(JSON.parse(JSON.stringify(value.data)),rows);assert.equal(reads,1);}
+  finally{fetchOverrides.delete(endpoint);}
+ });
+ await cursorCheck(reader.name+': inclusive and unknown-coverage guidance',async()=>{
+  const endpoint=reader.endpoint+'?from_id=789';fetchOverrides.set(endpoint,Response.json([{transaction_id:789}]));
+  try{const text=reader.note(await reader.read(789));assert.match(text,/boundary records are included/);assert.match(text,/deduplicate transaction IDs/);assert.match(text,/only when non-null/);assert.match(text,/not complete history/);}
+  finally{fetchOverrides.delete(endpoint);}
+ });
+ for(const invalid of [null,{}, {transaction_id:-1},{transaction_id:0},{transaction_id:1.5},{transaction_id:'789'},{transaction_id:Number.MAX_SAFE_INTEGER+1}])await cursorCheck(reader.name+': malformed row '+JSON.stringify(invalid),async()=>{
+  const endpoint=reader.endpoint+'?from_id=789';fetchOverrides.set(endpoint,Response.json([{transaction_id:789},invalid]));
+  try{await assert.rejects(reader.read(789),error=>error.status===502&&error.message==='EVE returned an unexpected dataset.');}
+  finally{fetchOverrides.delete(endpoint);}
+ });
+}
+for(const reader of cursorReaders.slice(0,2))await cursorCheck(reader.name+': legacy numeric-string cursor remains supported',async()=>{
+ const endpoint=reader.endpoint+'?from_id=789';fetchOverrides.set(endpoint,Response.json([{transaction_id:789}]));
+ try{const value=await reader.read('789');assert.equal(reader.next(value),null);assert.equal(value.data[0].transaction_id,789);}
+ finally{fetchOverrides.delete(endpoint);}
+});
+await cursorCheck('catalog string cursor remains rejected before provider read',async()=>{
+ let called=false;fetchOverrides.set(cursorReaders[2].endpoint+'?from_id=789',()=>{called=true;return Response.json([]);});
+ try{await assert.rejects(cursorReaders[2].read('789'),error=>error.status===400);assert.equal(called,false);}
+ finally{fetchOverrides.delete(cursorReaders[2].endpoint+'?from_id=789');}
+});
+console.log(JSON.stringify({suite:'transaction cursor progress',passed:cursorPassed,failed:cursorFailures.length,failures:cursorFailures},null,2));
+assert.equal(cursorFailures.length,0,'Transaction cursor regressions failed: '+JSON.stringify(cursorFailures));
+}finally{sqlite.prepare('UPDATE eve_connections SET scopes=? WHERE user_id=? AND character_id=?').run(cursorOriginalScopes,'user-a',12345);}
+}
+
 for(const [status,header,seconds]of [[429,'retry-after','120'],[420,'x-esi-error-limit-reset','55'],[429,'retry-after','0']]){
  fetchOverrides.set(assetsEndpoint,Response.json({error:'synthetic confidential upstream detail'},{status,headers:{[header]:seconds}}));
  await assert.rejects(api.readEve('user-a',{characterId:12345,entity:'character',dataset:'assets'}),e=>e.status===429&&e.upstreamStatus===status&&e.message.includes(`Retry after ${seconds} seconds.`)&&!e.message.includes('confidential'));
