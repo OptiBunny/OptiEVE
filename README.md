@@ -1,6 +1,6 @@
 # OptiEVE
 
-A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes twenty-four tools through `/mcp`:
+A private, read-only overview and connector for EVE Online character and corporation data. It uses EVE SSO authorization code flow with PKCE and exposes the following tools through `/mcp`:
 
 | Tool | Data returned |
 | --- | --- |
@@ -9,6 +9,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
 | `wallet_activity_report` | One journal page’s cash-flow totals and categories, with the latest thirty returned UTC dates and explicit omissions |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
+| `contracts_report` | One contracts-page briefing with status/type counts and up to twenty upcoming offer expirations |
 | `read_character_data` | An allowlisted character dataset, with dataset-specific parameters and pagination |
 | `read_corporation_data` | Wallet balances, assets and name/location lookups, order history, contracts and items/bids, industry jobs, blueprints, facilities, structures, mining extractions, freelance jobs, projects and your selected character’s contribution |
 | `resolve_names` | Public EVE names for supplied IDs |
@@ -93,6 +94,14 @@ Only types classified in blueprint category 9 by the pinned public SDE qualify a
 **Industry jobs** adds personal and corporation job dashboards: reported-status composition, activity counts, an active-job end-date chart, a filterable timeline and exact UTC job dates. The timeline shows the first 20 matching jobs, with all matching jobs available in 100-row table slices. Summary charts cover the full returned response; local filters affect only the timeline and table. The optional completed-jobs read requests EVE's available history window, up to 90 days. Personal jobs use one unpaged response; corporation jobs use an explicit page. A reported ready job is different from a delivered job, and a past end time does not establish completion. Runs stay per job, with no mixed-activity output total, cost or profit calculation. Installer, completing-character, facility/location and blueprint-item identifiers are omitted. The application rejects responses above 5,000 rows rather than truncating summaries.
 
 Both views reuse existing asset/industry read grants. Corporation access remains controlled by EVE roles (Director for assets and Factory Manager for jobs). There are no new scopes, credentials, history tables, automatic reads or game-state writes. These are web dashboards and do not add MCP tools. Their shapes and limits follow the [dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31); activity labels come from the pinned official SDE, with unknown numeric activities retained explicitly.
+
+**Contracts** shows one selected character or current-corporation contracts page. It includes reported status and type counts, issued and offer-expiry dates, and optional acceptance/duration fields. Summary counts use the report completion time: outstanding offers at or before that instant are past their reported expiry; the next-24-hours count includes future expiries through the exact boundary. These dates do not change EVE’s reported status.
+
+The offer-expiry chart covers outstanding records only and shows the earliest thirty returned UTC dates with real calendar spacing and explicit omitted-date counts. Every returned date remains selectable. Local status/type/date/contract-ID filters use 100-row table pages, while charts keep full-response counts. Chart selections replace the relevant filters so the selected count matches the table. Changing owner, feed, provider page or loading again clears prior results; provider pages are never combined automatically.
+
+The private-chat `contracts_report` uses the same page and grants. It returns full-page counts and at most twenty outstanding offers whose expiry is after the report timestamp, with total and omitted counts. Unavailable counts remain unknown; a verified empty page remains zero. Titles, counterparties, locations, prices, rewards, collateral, items and bids are omitted. No permission expansion, persistent history, public-name lookup or extra detail read is added.
+
+EVE’s contracts endpoints cover contracts involving the selected issuer, acceptor or assignee, with a documented thirty-day window except for in-progress contracts. An offer expiry is not an accepted courier delivery deadline. Acceptance time and days-to-complete are reported inputs, not a derived deadline or proof of fulfillment, failure, reward or profit. The app rejects a response above 1,000 contracts instead of silently truncating its summaries. [CCP’s dated contracts schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31) and [courier guidance](https://support.eveonline.com/hc/en-us/articles/203218982-Courier-Contracts) describe these distinctions.
 
 **Skills & training** adds a character-manager dashboard for reported total and unallocated SP, skill-group and level charts, a searchable skill list, attributes and remap metadata, and a reported queue timeline with exact UTC dates. Trained and active levels remain separate, including expert-system boosts. The chart does not infer active training, current SP, completion or a precise training rate. Skills may lag until the next EVE login, and queue dates can be absent or already past. Skills, queue and attributes load independently under their existing read scopes, with a shared deadline and per-section freshness. Responses above the application limits of 2,000 skill rows or 1,000 queue rows are rejected rather than silently truncated.
 

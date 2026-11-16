@@ -251,6 +251,12 @@ boundary and duplicate rows remain intact, with explicit deduplication guidance.
 A null continuation is not proof of complete history or a validated lifetime
 ledger. No automatic paging or collection is introduced.
 
+Contracts analytics accepts an owned character, character/corporation feed and one page from 1 to 500. It reuses existing saved contracts grants and current-corporation resolution under one shared 55-second deadline and caller cancellation. The complete selected response is validated before projection, rejecting duplicate IDs, malformed enums/dates and more than 1,000 rows. Full-page counts and freshness remain separate from a thirty-date browser chart subset and twenty-offer MCP subset. Unavailable evidence remains null; optional metadata outside the supported timestamp domain becomes unknown.
+
+Projection excludes raw parties, titles, locations, monetary fields, items and bids. The compact report further omits acceptance/duration inputs and individual non-upcoming contracts. No follow-on detail read, new grant, persistent state or background collection is introduced. Browser controls bind results to owner/feed/page, validate aggregate counts against projected records, render 100 rows at a time and clear on refresh or selection change.
+
+The contracts row bound applies after the existing raw reader parses its response; it is not an upstream response-byte cap. The existing upstream-body limit gap remains a documented resource boundary, not a protection implied by normalized row counts.
+
 | Surface | Important projection and evidence boundary |
 | --- | --- |
 | Raw character/corporation MCP reads | Can include sensitive mail, location or other dataset fields. Allowlisting does not make returned player content trusted instructions or public data. |
@@ -411,6 +417,7 @@ recipes. Trusted toolchain review remains necessary despite pinned hashes.
 | OAuth, encryption, ownership and read dispatch | [EVE service](app/lib/eve.ts), [character catalog](app/lib/character-data.ts), [corporation catalog](app/lib/corporation-data.ts), [callback](app/eve/callback/route.ts); [authorization tests](tests/eve-security.mjs). |
 | Persistence and setup | [schema](db/schema.ts), [migrations](drizzle), [private-use guide](PRIVATE_USE.md); [connection client tests](tests/connection-client.mjs). |
 | Request budgets and local runtime behavior | [body reader](app/lib/request-body.ts); [body tests](tests/request-body.mjs), [actual Wrangler tests](tests/wrangler-runtime.mjs). |
+| Contracts analytics and briefing | [reader](app/lib/contracts-analytics.ts), [strict client](app/lib/contracts-analytics-client.ts), [compact report](app/lib/contracts-report.ts); [service tests](tests/contracts-analytics.mjs), [client tests](tests/contracts-analytics-client.mjs), [panel tests](tests/contracts-analytics-panel.mjs), [report tests](tests/contracts-report.mjs). |
 | Blueprint evidence and streams | [collection](app/lib/blueprint-collection.ts), [reconciliation](app/lib/blueprint-reconciliation.ts), [strict client](app/lib/blueprint-reconciliation-client.ts), [stream](app/lib/blueprint-reconciliation-stream.ts); [reader tests](tests/blueprint-reconciliation.mjs), [client tests](tests/blueprint-reconciliation-client.mjs), [stream tests](tests/blueprint-reconciliation-stream.mjs), [one-source UI tests](tests/blueprint-reconciliation-panel.mjs). |
 | Manufacturing evidence | [assessment](app/lib/manufacturing-assessment.ts), [planning](app/lib/manufacturing-planning.ts), [stock](app/lib/manufacturing-stock.ts), [catalog](app/lib/manufacturing-catalog.ts); [assessment tests](tests/manufacturing-assessment.mjs), [planning tests](tests/manufacturing-planning.mjs). |
 | Public selection and private sync | [source checks](scripts/public-source.mjs), [packager](scripts/package-public-source.mjs), [sync](scripts/sync-private-source.mjs); [public boundary tests](tests/public-source.mjs), [private boundary tests](tests/private-source.mjs). |

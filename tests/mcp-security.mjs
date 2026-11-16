@@ -23,7 +23,7 @@ function harness(options = {}) {
   const characterWorkspaceCalls = [];
   const manufacturingCalls = [];
   const historyCalls = [];
-  const overviewCalls = [], overviewFeedCalls = [], trainingCalls = [], walletReportCalls = [];
+  const overviewCalls = [], overviewFeedCalls = [], trainingCalls = [], walletReportCalls = [], contractsReportCalls = [];
   let realOverview;
   const execute = (code, require = () => { throw new Error('Unexpected import'); }) => {
     const fixtureModule = { exports: {} };
@@ -166,6 +166,8 @@ function harness(options = {}) {
     if (name.endsWith('/character-training-report')) return { readCharacterTrainingReport: async (user, args, context) => { calls.push('training-report'); trainingCalls.push({ user, args, signal: context.signal }); if (options.trainingError) throw new Error('OMIT_PRIVATE_TRAINING'); if (options.trainingOwnerError) throw new EveError('Choose a connected character.', 404); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/character-analytics')) return { readCharacterAnalytics: async (user, args, context) => { calls.push('character-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
     if (name.endsWith('/clone-analytics')) return { readCloneAnalytics: async (user, args, context) => { calls.push('clone-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, synthetic: true }; } };
+    if (name.endsWith('/contracts-report')) return { readContractsReport: async (user, args, context) => { calls.push('contracts-report'); contractsReportCalls.push({ user, args, signal: context.signal }); if (options.contractsReportError) throw new Error('OMIT_PRIVATE_CONTRACTS'); if (options.contractsReportOwnerError) throw new EveError('Choose a connected character.', 404); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
+    if (name.endsWith('/contracts-analytics')) return { readContractsAnalytics: async (user, args, context) => { calls.push('contracts-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/wallet-activity-report')) return { readWalletActivityReport: async (user, args, context) => { calls.push('wallet-report'); walletReportCalls.push({ user, args, signal: context.signal }); if (options.walletReportError) throw new Error('OMIT_PRIVATE_WALLET'); if (options.walletReportOwnerError) throw new EveError('Choose a connected character.', 404); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/wallet-analytics')) return { validateWalletAnalyticsArgs: validateWalletArgs, readWalletAnalytics: async (user, args, context) => { calls.push('wallet-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
     if (name.endsWith('/inventory-analytics')) return { readInventoryAnalytics: async (user, args, context) => { calls.push('inventory-analytics'); characterWorkspaceCalls.push({ user, args, signal: context.signal }); if (options.analyticsError) throw new Error('OMIT_PRIVATE_ANALYTICS'); return { characterId: args.characterId, entity: args.entity, synthetic: true }; } };
@@ -180,7 +182,7 @@ function harness(options = {}) {
     if (name.endsWith('/request-body')) return bodyModule ??= execute(source('app/lib/request-body.ts'));
     throw new Error('Unexpected import');
   };
-  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls, overviewCalls, overviewFeedCalls, trainingCalls, walletReportCalls };
+  return { mcp: execute(mcpCode, require), api: execute(apiCode, require), catalog, calls, workspaceCalls, characterWorkspaceCalls, manufacturingCalls, historyCalls, overviewCalls, overviewFeedCalls, trainingCalls, walletReportCalls, contractsReportCalls };
 }
 
 function request(value, options = {}) {
@@ -207,7 +209,7 @@ test('Sites discovery retains existing tools and exposes the optional corporatio
   assert.deepEqual(discovery.result.capabilities, { tools: {} });
   assert.equal(discovery.result.serverInfo.name, 'OptiEVE');
   const listing = await (await mcp.POST(request(rpc('tools/list')))).json();
-  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'character_overview', 'character_training_report', 'wallet_activity_report', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
+  assert.deepEqual(listing.result.tools.map(item => item.name), ['connection_status', 'character_overview', 'character_training_report', 'wallet_activity_report', 'contracts_report', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'public_market', ...manufacturingNames, ...historyNames]);
   assert(listing.result.tools.filter(item => !historyNames.includes(item.name)).every(item => item.annotations.readOnlyHint && !item.annotations.destructiveHint));
 });
 
@@ -908,7 +910,7 @@ for (const [dataset, parameter] of [['asset_names', 'itemIds'], ['mail', 'labels
   }
 });
 
-for (const operation of ['character-analytics', 'clone-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'order-analytics', 'blueprint-analytics', 'blueprint-collection', 'blueprint-reconciliation']) {
+for (const operation of ['character-analytics', 'clone-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'contracts-analytics', 'order-analytics', 'blueprint-analytics', 'blueprint-collection', 'blueprint-reconciliation']) {
   test(`${operation} is protected by authentication, origin, content type and request limits`, async () => {
     for (const [headers, expected] of [[{ 'oai-authenticated-user-id': '' }, 401], [{ origin: 'https://other.invalid' }, 403], [{ 'content-type': 'text/plain' }, 415]]) {
       const { api, calls } = harness();
@@ -1198,7 +1200,7 @@ test('legacy batches still permit saved history status and reports', async () =>
 
 test('saved history comparisons reuse the existing read-only tool with bounded report options', async () => {
   const h = harness(), listed = (await (await h.mcp.POST(request(rpc('tools/list')))).json()).result.tools;
-  assert.equal(listed.length, 24);
+  assert.equal(listed.length, 25);
   const report = listed.find(item => item.name === 'wallet_history_report');
   assert.deepEqual(report.inputSchema.properties.days.enum, [7, 30, 90, 365]);
   assert.equal(report.inputSchema.properties.comparePrevious.type, 'boolean');
@@ -1298,5 +1300,47 @@ test('wallet activity report preserves owner denial and redacts unexpected failu
     assert.equal(response.result.isError, true); assert.equal(h.walletReportCalls.length, 1);
     assert.doesNotMatch(JSON.stringify(response), /OMIT_PRIVATE/);
     assert.deepEqual(h.calls, ['wallet-report']);
+  }
+});
+
+test('contracts report advertises only bounded read-only page selectors', async () => {
+  const h = harness(), listing = await (await h.mcp.POST(request(rpc('tools/list')))).json();
+  const item = listing.result.tools.find(row => row.name === 'contracts_report');
+  assert.deepEqual(item.inputSchema, { type: 'object', required: ['characterId', 'entity'], properties: { characterId: { type: 'integer', minimum: 1 }, entity: { type: 'string', enum: ['character', 'corporation'] }, page: { type: 'integer', minimum: 1, maximum: 500 } }, additionalProperties: false });
+  assert.deepEqual(item.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.deepEqual(h.calls, []);
+});
+
+test('contracts report forwards gateway owner and selected feed with cancellation', async () => {
+  for (const args of [{ characterId: 90000001, entity: 'character' }, { characterId: 90000001, entity: 'corporation', page: 500 }]) {
+    const h = harness(), input = request(tool('contracts_report', args)), response = await (await h.mcp.POST(input)).json();
+    assert.equal(response.result.isError, undefined); assert.deepEqual(h.calls, ['contracts-report']);
+    assert.equal(h.contractsReportCalls[0].user, 'synthetic-user');
+    assert.deepEqual(JSON.parse(JSON.stringify(h.contractsReportCalls[0].args)), args);
+    assert.equal(h.contractsReportCalls[0].signal, input.signal);
+  }
+});
+
+test('contracts report rejects invalid or broader selectors before a reader runs', async () => {
+  const h = harness(), selection = { characterId: 90000001, entity: 'character' };
+  for (const args of [null, {}, { characterId: 90000001 }, { ...selection, characterId: 0 }, { ...selection, characterId: Number.MAX_SAFE_INTEGER + 1 }, { ...selection, characterId: '90000001' }, { ...selection, entity: 'all' }, { ...selection, page: 0 }, { ...selection, page: 501 }, { ...selection, page: 1.5 }, { ...selection, page: '1' }, { ...selection, division: 1 }, { ...selection, contractId: 123 }, { ...selection, corporationId: 98000001 }, { ...selection, userId: 'other' }, { ...selection, dataset: 'mail' }, { ...selection, url: 'https://attacker.example' }]) {
+    await rpcError(await h.mcp.POST(request(tool('contracts_report', args))), -32602, 1);
+  }
+  assert.deepEqual(h.calls, []); assert.equal(h.contractsReportCalls.length, 0);
+});
+
+test('contracts report requires trusted identity and does not execute notifications', async () => {
+  const h = harness(), args = { characterId: 90000001, entity: 'character' };
+  const response = await (await h.mcp.POST(request(tool('contracts_report', args), { headers: { 'oai-authenticated-user-id': '' } }))).json();
+  assert.equal(response.result.isError, true);
+  const notification = await h.mcp.POST(request({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'contracts_report', arguments: args } }));
+  assert.equal(notification.status, 202); assert.deepEqual(h.calls, []);
+});
+
+test('contracts report keeps owner denial and hides unexpected provider details', async () => {
+  for (const options of [{ contractsReportOwnerError: true }, { contractsReportError: true }]) {
+    const h = harness(options), response = await (await h.mcp.POST(request(tool('contracts_report', { characterId: 90000001, entity: 'corporation' })))).json();
+    assert.equal(response.result.isError, true); assert.doesNotMatch(JSON.stringify(response), /OMIT_PRIVATE/);
+    assert.deepEqual(h.calls, ['contracts-report']); assert.equal(h.contractsReportCalls.length, 1);
   }
 });

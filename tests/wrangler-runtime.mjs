@@ -212,7 +212,7 @@ try {
   check(initialized.serverInfo.name === 'OptiEVE', 'Unexpected MCP server identity');
   check(initialized.instructions.includes('assess_manufacturing') && initialized.instructions.includes('No game writes'), 'Manufacturing guidance must reach the real MCP client');
   const toolNames = (await rpc('tools/list')).result.tools.map(tool => tool.name).sort();
-  check(JSON.stringify(toolNames) === JSON.stringify(['connection_status', 'character_overview', 'character_training_report', 'wallet_activity_report', 'public_market', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing', 'manufacturing_compare', 'manufacturing_plan', 'wallet_history_status', 'wallet_history_report', 'configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'].sort()), 'Unexpected MCP tool catalog');
+  check(JSON.stringify(toolNames) === JSON.stringify(['connection_status', 'character_overview', 'character_training_report', 'wallet_activity_report', 'contracts_report', 'public_market', 'read_character_data', 'read_corporation_data', 'read_private_data', 'resolve_names', 'manufacturing_item_search', 'manufacturing_recipe', 'manufacturing_catalog_status', 'manufacturing_requirements', 'manufacturing_market_history', 'manufacturing_industry_costs', 'manufacturing_station_quote', 'assess_manufacturing', 'manufacturing_compare', 'manufacturing_plan', 'wallet_history_status', 'wallet_history_report', 'configure_wallet_history', 'capture_wallet_history', 'clear_wallet_history'].sort()), 'Unexpected MCP tool catalog');
   check((await rpc('tools/call', { name: 'connection_status', arguments: {} })).result.isError === true, 'Missing MCP identity must be rejected');
   const connection = (await rpc('tools/call', { name: 'connection_status', arguments: {} }, true)).result;
   check(!connection.isError && JSON.parse(connection.content[0].text).characters.length === 0, 'Synthetic MCP status must be empty');
@@ -329,7 +329,7 @@ try {
     expectStatus(await post('/api/eve/character-workspace', JSON.stringify({ characterId: 90000001, ...input }), { ...identity, origin }), 400);
   }
   expectStatus(await request('/api/eve/character-workspace', { headers: identity }), 404);
-  for (const operation of ['character-analytics', 'clone-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'order-analytics', 'blueprint-analytics']) {
+  for (const operation of ['character-analytics', 'clone-analytics', 'wallet-analytics', 'inventory-analytics', 'industry-analytics', 'contracts-analytics', 'order-analytics', 'blueprint-analytics']) {
     stage = `${operation} request and response protections`;
     const body = JSON.stringify({ characterId: 90000001, ...(['character-analytics', 'clone-analytics'].includes(operation) ? {} : { entity: 'character', ...(operation === 'industry-analytics' ? { includeCompleted: false } : operation === 'order-analytics' ? {} : { page: 1 }) }) });
     for (const [headers, status] of [[{ origin }, 401], [identity, 403], [{ ...identity, origin: 'https://wrong.example' }, 403], [{ ...identity, origin, 'content-type': 'text/plain' }, 415], [{ ...identity, origin }, 404]]) {
@@ -484,6 +484,16 @@ try {
   check((await rpc('tools/call', { name: 'wallet_activity_report', arguments: { characterId: 90000002, entity: 'character', division: 1 } }, true)).error.code === -32602, 'Personal wallet report must reject a division');
   check((await rpc('tools/call', { name: 'wallet_activity_report', arguments: { characterId: 90000002, entity: 'corporation' } }, true)).error.code === -32602, 'Corporation wallet report must require a division');
   check((await rpc('tools/call', { name: 'wallet_activity_report', arguments: { characterId: 90000002, entity: 'corporation', division: 1, corporationId: 98000001 } }, true)).error.code === -32602, 'Corporation wallet report must derive current membership');
+  for (const entity of ['character', 'corporation']) {
+    const contractsTool = (await rpc('tools/call', { name: 'contracts_report', arguments: { characterId: 90000002, entity } }, true)).result;
+    check(contractsTool.isError !== true, 'Owned contracts briefing must preserve missing grants without provider reads');
+    const contracts = JSON.parse(contractsTool.content[0].text);
+    check(contracts.entity === entity && contracts.status === 'needs_permission' && contracts.summary === null && contracts.statusCounts.length === 0 && contracts.upcomingOutstandingOffers.length === 0 && contracts.upcomingOfferTotal === null && contracts.upcomingOffersOmitted === null && contracts.upcomingOfferLimit === 20, 'Contracts report must retain unknown evidence and compact bounds');
+  }
+  check((await rpc('tools/call', { name: 'contracts_report', arguments: { characterId: 90000002, entity: 'character' } })).result.isError === true, 'Contracts report must require gateway identity');
+  check((await rpc('tools/call', { name: 'contracts_report', arguments: { characterId: 90000003, entity: 'character' } }, true)).result.isError === true, 'Contracts report must reject unowned characters');
+  check((await rpc('tools/call', { name: 'contracts_report', arguments: { characterId: 90000002, entity: 'corporation', corporationId: 98000001 } }, true)).error.code === -32602, 'Contracts report must derive current corporation membership');
+  check((await rpc('tools/call', { name: 'contracts_report', arguments: { characterId: 90000002, entity: 'character', page: 501 } }, true)).error.code === -32602, 'Contracts report must bound selected pages');
   const trainingTool = (await rpc('tools/call', { name: 'character_training_report', arguments: { characterId: 90000002 } }, true)).result;
   check(!trainingTool.isError, 'Owned training report with no grants must return explicit missing permissions');
   const trainingData = JSON.parse(trainingTool.content[0].text);
