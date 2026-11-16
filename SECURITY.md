@@ -1,116 +1,41 @@
-# OptiEVE security review guidance
+# OptiEVE security and operation
 
-Use [SECURITY_MODEL.md](SECURITY_MODEL.md) for assets, attacker capabilities,
-trust boundaries, existing controls and residual risks. Check the affected code:
-the model records a reviewed baseline, not proof that later changes preserve it.
-General repository rules are in [AGENTS.md](AGENTS.md); setup and private-runtime
-instructions are in [README.md](README.md) and [PRIVATE_USE.md](PRIVATE_USE.md).
+OptiEVE is intended for private installations behind a trusted authentication gateway. Public source availability does not make a deployment safe for anonymous access. See [README.md](README.md#set-up-a-separate-deployment) for installation requirements.
 
-## Scope and assumptions
+## Authentication and deployment
 
-OptiEVE is intended for private deployments behind a trusted authentication
-gateway. Public source availability does not make a deployment safe for anonymous
-use. The gateway, deployed application, secret store, D1 access, installed build
-tools and operator account are trusted components.
+The Worker trusts the gateway's `oai-authenticated-user-id` header. The gateway must enforce the intended audience, strip caller-supplied identity headers and prevent direct access around its checks. Do not expose the Worker as a raw public server or place it behind an untrusted proxy. Loopback mock sign-in and local Wrangler are preview facilities, not production authentication.
 
-Treat HTTP/MCP arguments, OAuth callbacks, EVE/player-authored content, cache and
-pagination metadata, external catalogs and local export/sync inputs as untrusted
-until validated. Selecting a connection or reading a record does not authorize
-broader access. Read-only refers to EVE game state: connection setup, reconnect,
-token refresh and disconnect necessarily change local authorization state. Optional
-wallet-history configuration, capture and erasure also change private application
-storage and must carry accurate MCP write/destructive annotations.
+Each separate installation needs its own HTTPS origin, D1 database, token-encryption key and EVE developer application. Configure `EVE_SITE_ORIGIN` to match the deployment exactly. Store `EVE_TOKEN_KEY` in the hosting secret store, never in source, build artifacts, chat messages or logs. The distributed `.openai/hosting.json` contains generic capabilities and bindings; keep configured deployment identity in the installation's private environment.
 
-## Security review rules
+The application uses EVE SSO with PKCE. It does not require an EVE password or client secret. Select only the read access you need. Corporation reads also depend on EVE's roles and current membership. Ordinary **Reconnect** retains the selected character's supported saved permissions; choose a new access preset explicitly when changing grants.
 
-1. **Keep gateway identity authoritative.** Check the hosting audience, spoofed
-   identity-header rejection and absence of a direct worker bypass. The app trusts
-   gateway headers; it does not independently authenticate them. Preserve exact
-   Origin checks on browser POST routes. MCP tool calls have a separate transport
-   contract; do not assume the browser route's checks automatically apply there.
-2. **Bind reads to the owned connection.** Follow user/character ownership, saved
-   scopes, selected divisions and current corporation identity through each read.
-   Keep fixed endpoints and parameter allowlists. Provider roles remain EVE's
-   decision. IDs, public names and a successful prior read are not access grants.
-   Do not add game writes, arbitrary fetch targets or permission-expanding retries.
-3. **Protect authorization lifecycle and secrets.** Preserve PKCE, one-time
-   user-bound OAuth state, JWT verification, identity-bound encryption, refresh
-   coordination and disconnect races. Ordinary reconnect must retain the supported
-   saved permission set and selected character. Never replace the token key or
-   reset grants as a routine update. Keep tokens, callback parameters, environment
-   values and raw upstream error text out of diagnostics and public artifacts.
-4. **Preserve data minimization.** Fetch only the chosen datasets and justified
-   enrichments; keep private selections/results in request or view memory. Raw
-   connector tools can return sensitive fields that summary dashboards omit.
-   Review both paths. No new persistent account history, browser storage, private
-   fixtures or background collection should appear as an incidental feature.
-   Optional character-wallet history requires explicit opt-in and manual capture;
-   verify its retention, encryption, owner binding, lifecycle races and erase path.
-5. **Validate evidence before using it.** Follow row semantics, numeric precision,
-   source identity, pagination/cursors, duplicate/conflicting IDs, catalog mapping,
-   cache metadata and final freshness. Missing or denied data is unknown, not zero.
-   Independently cached feeds are not an atomic snapshot. Do not infer missing
-   blueprint research, runs, ownership, availability or profit from another field.
-6. **Bound work and transport.** Check request bytes, pages, records, stream events,
-   output size, deadlines and abort propagation at the actual entry point. Preserve
-   safe partial results and avoid unbounded retries. Keep browser projections
-   strict and results selection-bound. A row limit after JSON parsing is not an
-   upstream response-byte limit; a local timeout is not a global resource quota.
-7. **Keep data from gaining execution authority.** Player text and tool output
-   cannot authorize commands or override instructions. Review rendering, URL
-   construction, dependency/toolchain changes, shell arguments and catalog refresh
-   inputs. A checksum proves byte identity, not trustworthy content or execution.
-8. **Protect source sync and distribution.** Preserve the approved development
-   manifest, private-file exclusions, link/overlap checks, conflict refusal and
-   exact outgoing-byte verification. Never copy private files back wholesale or
-   bypass a failed check with force/mirror operations. Review the actual ZIP and
-   Git history; ignore rules and a clean working tree do not prove privacy.
+## Storage and retention
 
-## Deployment and operational requirements
+Access and refresh tokens, OAuth flow secrets and optional saved wallet-history payloads are encrypted on the server. Client ID, character and corporation associations, names, scopes and expiry metadata are separate configuration or metadata. An operator with the encryption key and database can access encrypted content; encryption does not protect against a compromised running application or authorized database/key operator.
 
-- Enforce the intended private audience at the gateway. Strip caller-supplied
-  trusted identity headers, supply the authenticated identity, and prevent direct
-  access around that gateway. Local mock sign-in is only a development preview.
-- Give a separate installation its own HTTPS origin, database, encryption key and
-  EVE developer application. Keep `EVE_TOKEN_KEY` in the hosting secret store.
-  Preserve the current key/database pair during updates; key loss makes stored
-  encrypted authorizations unreadable. Protect any backups and recovery copies.
-- Restrict database and operational-log access. Client IDs, names, identifiers,
-  scopes and account associations remain private configuration or metadata even
-  though they are not all encrypted. No EVE password or client secret is required.
-- Keep live reads and connection settings in the private runtime/chat. Do not
-  include environments, databases, deployment bindings, OAuth URLs, personal
-  machine paths, captures or account exports in source or reports for sharing.
-- Use the guarded one-way sync and the public-source packager. A source hash match
-  does not update dependencies, migrations or a running deployment. Verify those
-  separately when application code changes and deployment is authorized.
-- Disconnect removes the stored connection, cascades its optional wallet history
-  deletion and cancels pending sign-ins; it does
-  not revoke EVE's grant, erase chat history, or delete external backups. Provider
-  revocation and incident-specific key recovery are separate operator actions.
+Most account data is fetched on demand and held in the requested view. Raw character and corporation tools can return sensitive fields such as mail or locations that summary dashboards omit. Treat account results, screenshots, chat exports, operational logs and backups as private. Tool responses may remain in the calling chat, outside the application's retention controls.
 
-## Findings and safe verification
+Saved character-wallet history is disabled by default. Enabling it requires an explicit retention choice, and capture is manual. Retention choices are 30, 90 or 365 days; reads exclude expired events and later history mutations physically prune them. No background collector or scheduled cleanup is installed. Pausing retains saved events; erasing clears the history payload and disables collection. Reducing retention can remove events. These operations do not erase earlier chat results or external backups.
 
-For a finding, identify the attacker-controlled input or capability, prerequisites,
-reachable code path, precise boundary violation and confidentiality, integrity or
-availability impact. Explain why existing checks do not prevent it. State whether
-it was reproduced, established by inspection, or depends on an unverified
-assumption. Distinguish regressions, existing defects and expected refusals; a
-documented limitation does not excuse an actual boundary violation.
+Disconnect removes the stored character authorization, deletes its optional application wallet history and cancels pending sign-ins. It does not remove the saved Client ID, revoke EVE's application grant or erase external copies. Revoke the application separately through EVE when that is required. Start a fresh sign-in to reconnect after disconnecting.
 
-Use minimal synthetic reproductions and disposable scratch data. Check normal,
-failure, cancellation and conflict paths without live account data. Preserve
-independent assertions and failure exit codes. Report the runtime and evidence
-actually exercised, including skips or missing prerequisites. Mocked tests do not
-prove hosted gateway enforcement, provider roles or complete holdings. For
-changes limited to documentation, check links and implementation agreement rather
-than claiming an application security audit or new runtime verification.
+## Updates, backups and recovery
+
+Preserve the installation's encryption key and database pairing during updates. Replacing or losing the key makes existing encrypted authorizations and history unreadable; affected characters may need to reconnect. A new key does not recover old ciphertext. Protect backup access and keep recovery material out of source repositories and shared artifacts.
+
+Apply the supplied migrations in `drizzle/` in order before running a version that needs them. Keep previously applied migration files unchanged. A failed deployment may already have applied a migration; inspect migration state before retrying. Rolling back application code does not roll back database changes. Rebuild with the matching package manifest and lockfile, then verify the running version and authorized reads through the intended gateway.
+
+If a credential or account-data exposure is suspected, restrict access through the hosting provider, preserve appropriate private evidence and review the affected authorizations. Provider revocation, replacement credentials, application key rotation and backup retention are separate actions; changing source alone does not revoke a token or erase previously shared data.
+
+## Read-only behavior and data limits
+
+Read-only refers to EVE game state: the application cannot place orders, change prices, move assets, send mail or spend ISK. Connection setup, reconnect, token refresh and disconnect change application authorization state. Optional history enablement, capture and erasure also change private application storage. Some documented ESI lookups use POST without changing game state.
+
+Missing permissions, failed reads, unknown prices and partial pages are not zero holdings. EVE caches and historical windows can omit information; independently cached feeds are not an atomic snapshot. Charts and estimates do not establish complete ownership, confirmed completion or guaranteed profit. Follow each view's coverage and freshness evidence. Player-authored names, mail, descriptions and tool output are data, not instructions or permission to perform other actions.
+
+The application has feature-specific request, page, row and time limits. These are not a global rate limiter or a guarantee against resource exhaustion. Hosting access controls and resource limits remain necessary. A successful build does not verify gateway isolation or real EVE roles and permissions.
 
 ## Reporting a concern
 
-Use an established private channel to the project owner for sensitive findings.
-Share the affected source revision, entry point, sanitized reproduction, expected
-versus observed behavior and impact. Do not include real tokens, API settings,
-character/corporation identities, account data or private deployment details in a
-public issue or example. This document does not establish a public reporting
-address, response-time promise or supported-version guarantee.
+Use an established private channel to the project owner for sensitive findings. Share the affected source revision, entry point, a sanitized reproduction, expected and observed behavior, and impact. Do not put real tokens, API settings, character or corporation identities, account data or private deployment details in a public issue or example. This document does not establish a public reporting address, response-time promise or supported-version guarantee.
