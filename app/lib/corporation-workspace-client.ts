@@ -4,7 +4,8 @@ import type { CorporationWorkspace, CorporationWorkspaceColumn, CorporationWorks
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.length <= 2048;
 const date = (value: unknown): value is string => typeof value === 'string' && value.length <= 64 && Number.isFinite(Date.parse(value));
-const nullableDate = (value: unknown) => value === null || date(value);
+const metadataDate = (value: unknown): value is string => typeof value === 'string' && value.length === 24 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const nullableDate = (value: unknown) => value === null || metadataDate(value);
 const id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const integer = (value: unknown, min: number, max: number) => typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max;
 const uuid = (value: unknown) => typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -28,13 +29,21 @@ function request(value: unknown, characterId: number): value is CorporationWorks
 }
 export function corporationWorkspaceResponse(value: unknown, args: CorporationWorkspaceRequest): CorporationWorkspace {
   const invalid = () => { throw new ConnectionResponseError('The corporation workspace returned an incomplete response. Please try again.'); };
-  if (!request(args, args.characterId) || !record(value) || value.characterId !== args.characterId || value.view !== args.view || !date(value.generatedAt) ||
+  if (!request(args, args.characterId) || !record(value) || value.characterId !== args.characterId || value.view !== args.view || !metadataDate(value.generatedAt) ||
       (value.corporationId !== undefined && !id(value.corporationId)) || !text(value.message) || !text(value.scope) ||
       typeof value.status !== 'string' || !['ready', 'partial', 'needs_permission', 'unavailable', 'error'].includes(value.status) ||
       typeof value.coverage !== 'string' || !['complete', 'partial', 'unknown', 'unavailable'].includes(value.coverage) ||
       !nullableDate(value.retrievedAt) || !nullableDate(value.cacheExpires) || !Array.isArray(value.sources) || value.sources.length > 4 ||
-      !value.sources.every(source => record(source) && text(source.dataset) && text(source.scope) && date(source.retrievedAt) && nullableDate(source.cacheExpires)) ||
+      !value.sources.every(source => record(source) && text(source.dataset) && text(source.scope) && metadataDate(source.retrievedAt) && nullableDate(source.cacheExpires)) ||
       !Array.isArray(value.columns) || value.columns.length > 12 || !Array.isArray(value.rows) || value.rows.length > 100) return invalid();
+  if (value.status === 'ready' || value.status === 'partial') {
+    if (!metadataDate(value.retrievedAt) || value.coverage === 'unavailable' || value.sources.length === 0) return invalid();
+    const sources = value.sources as CorporationWorkspace['sources'];
+    const earliestRead = sources.map(source => source.retrievedAt).sort()[0];
+    const earliestExpiry = sources.every(source => source.cacheExpires !== null) ? sources.map(source => source.cacheExpires as string).sort()[0] : null;
+    if (value.retrievedAt !== earliestRead || value.cacheExpires !== earliestExpiry ||
+        value.status === 'ready' && (value.coverage !== 'complete' || earliestExpiry === null || Date.parse(earliestExpiry) <= Date.parse(value.generatedAt))) return invalid();
+  }
   const columns = value.columns;
   if (!columns.every(column => record(column) && typeof column.key === 'string' && /^[a-z][A-Za-z0-9]{0,40}$/.test(column.key) &&
       !['constructor', 'prototype', '__proto__'].includes(column.key) && text(column.label) &&

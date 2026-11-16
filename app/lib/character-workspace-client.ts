@@ -13,7 +13,8 @@ const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(
 const text = (value: unknown): value is string => typeof value === 'string' && value.length <= 2048;
 const integer = (value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 const date = (value: unknown): value is string => typeof value === 'string' && value.length <= 64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
-const nullableDate = (value: unknown) => value === null || date(value);
+const metadataDate = (value: unknown): value is string => typeof value === 'string' && value.length === 24 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const nullableDate = (value: unknown) => value === null || metadataDate(value);
 const ledgerDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 const standing = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= -10 && value <= 10;
 const researchPoints = (value: unknown, signed = false): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER && (signed || value >= 0);
@@ -40,7 +41,7 @@ function validLabels(value: Record<string, unknown>, args: CharacterWorkspaceReq
   if (!record(labels) || !keys(labels, ['status', 'message', 'retrievedAt', 'cacheExpires', 'names']) || !text(labels.message) ||
       !nullableDate(labels.retrievedAt) || !nullableDate(labels.cacheExpires) || !Array.isArray(labels.names) || labels.names.length > 200) return false;
   if (labels.status === 'unavailable') return labels.retrievedAt === null && labels.cacheExpires === null && labels.names.length === 0;
-  if (!['ready', 'partial'].includes(labels.status as string) || !date(labels.retrievedAt)) return false;
+  if (!['ready', 'partial'].includes(labels.status as string) || !metadataDate(labels.retrievedAt)) return false;
   const expected = new Map<number, Set<string>>();
   for (const row of rows) for (const [key, id] of Object.entries(row.cells)) {
     const category = publicCategory(args.view, key);
@@ -55,7 +56,7 @@ function validLabels(value: Record<string, unknown>, args: CharacterWorkspaceReq
     seen.add(entry.id);
   }
   const stale = date(labels.cacheExpires) && Date.parse(labels.cacheExpires) <= Date.parse(value.generatedAt as string);
-  const complete = seen.size === expected.size && !stale;
+  const complete = seen.size === expected.size && labels.cacheExpires !== null && !stale;
   return labels.status === (complete ? 'ready' : 'partial');
 }
 
@@ -85,7 +86,7 @@ const metricLabels: Record<string, string[]> = {
 export function characterWorkspaceResponse(value: unknown, args: CharacterWorkspaceRequest): CharacterWorkspace {
   const invalid = (): never => { throw new ConnectionResponseError(`The ${workspaceName(args)} service returned an incomplete response. Please try again.`); };
   if (!request(args) || !record(value) || !keys(value, ['view', 'characterId', 'generatedAt', 'status', 'coverage', 'message', 'scope', 'retrievedAt', 'cacheExpires', 'metrics', 'columns', 'rows', 'next', 'labels']) ||
-      value.characterId !== args.characterId || value.view !== args.view || !date(value.generatedAt) || !text(value.message) || value.scope !== scopes[args.view] ||
+      value.characterId !== args.characterId || value.view !== args.view || !metadataDate(value.generatedAt) || !text(value.message) || value.scope !== scopes[args.view] ||
       typeof value.status !== 'string' || !['ready', 'partial', 'needs_permission', 'unavailable', 'error'].includes(value.status) ||
       typeof value.coverage !== 'string' || !['complete', 'partial', 'unknown', 'unavailable'].includes(value.coverage) ||
       !nullableDate(value.retrievedAt) || !nullableDate(value.cacheExpires) || !Array.isArray(value.metrics) || !Array.isArray(value.columns) ||
@@ -96,8 +97,8 @@ export function characterWorkspaceResponse(value: unknown, args: CharacterWorksp
     return value as CharacterWorkspace;
   }
   const stale = date(value.cacheExpires) && Date.parse(value.cacheExpires) <= Date.parse(value.generatedAt);
-  if (!date(value.retrievedAt) || value.coverage === 'unavailable' || value.status === 'ready' && (value.coverage !== 'complete' || stale) ||
-      value.status === 'partial' && value.coverage === 'complete' && !stale) return invalid();
+  if (!metadataDate(value.retrievedAt) || value.coverage === 'unavailable' || value.status === 'ready' && (value.coverage !== 'complete' || value.cacheExpires === null || stale) ||
+      value.status === 'partial' && value.coverage === 'complete' && value.cacheExpires !== null && !stale) return invalid();
   const specs = columnSpecs[args.view];
   if (value.columns.length !== specs.length || value.columns.some((column, index) => !record(column) || !keys(column, ['key', 'label', 'unit']) ||
       column.key !== specs[index].key || column.label !== specs[index].label || column.unit !== specs[index].unit)) return invalid();

@@ -48,6 +48,8 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 The twenty-one workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
 
+Character detail and corporation workspace results keep data coverage separate from cache freshness. A response with missing or unsupported cache-expiry evidence, or one that has expired by the time the load finishes, stays visibly partial while its accepted rows remain available. Optional public type/system labels have their own cache evidence; a fresh private response does not make those labels fresh. Cache age does not establish current game state or complete ownership.
+
 ## Notifications
 
 **Character → Notifications** manually reads the selected character's notifications using the existing `esi-characters.read_notifications.v1` grant. Opening the workspace, choosing a character or changing local filters makes no request. Load or Refresh replaces the result; no earlier responses are accumulated or stored.
