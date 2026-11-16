@@ -22,6 +22,18 @@ export type IndustryJob = {
   pauseAt: string | null;
   completedAt: string | null;
 };
+/** Partition of reported-active jobs at one load timestamp, never inferred status. */
+export type IndustrySchedule = {
+  asOf: string;
+  horizonDays: 30;
+  activePastEndJobs: number;
+  activeNext24hJobs: number;
+  activeDays2To7Jobs: number;
+  activeDays8To30Jobs: number;
+  activeLaterJobs: number;
+  /** Future reported ends within thirty rolling days, grouped by UTC date. */
+  daily: { date: string; activeJobs: number }[];
+};
 export type IndustryAnalytics = {
   characterId: number;
   entity: 'character' | 'corporation';
@@ -56,6 +68,7 @@ export type IndustryAnalytics = {
     unknownBlueprintNames: number;
     unknownProductNames: number;
   } | null;
+  schedule: IndustrySchedule | null;
   statusCounts: { status: IndustryJobStatus; count: number }[];
   activityCounts: { activityId: number; label: string; count: number }[];
   jobs: IndustryJob[];

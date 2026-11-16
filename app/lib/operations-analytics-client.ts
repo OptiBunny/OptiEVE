@@ -34,6 +34,12 @@ const jobStates = ['active', 'cancelled', 'delivered', 'paused', 'ready', 'rever
 const activityLabels: Record<number, string> = { 1: 'Manufacturing', 3: 'Time Efficiency Research', 4: 'Material Efficiency Research', 5: 'Copying', 8: 'Invention', 9: 'Reactions' };
 const jobStatus = z.enum(jobStates);
 const jobCount = count.max(5000);
+const calendarDate = z.string().length(10).regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => Number.isFinite(Date.parse(value + 'T00:00:00.000Z')) && new Date(value + 'T00:00:00.000Z').toISOString().slice(0, 10) === value);
+const industrySchedule = z.strictObject({
+  asOf: date, horizonDays: z.literal(30), activePastEndJobs: jobCount, activeNext24hJobs: jobCount,
+  activeDays2To7Jobs: jobCount, activeDays8To30Jobs: jobCount, activeLaterJobs: jobCount,
+  daily: z.array(z.strictObject({ date: calendarDate, activeJobs: jobCount.min(1) })).max(31),
+});
 const industryArgsSchema = z.strictObject({ characterId: id, entity, includeCompleted: z.boolean().optional(), page: id.max(500).optional() }).refine(value => value.entity === 'corporation' || value.page === undefined);
 const industrySchema = z.strictObject({
   characterId: id, entity, corporationId: id.nullable(), includeCompleted: z.boolean(), generatedAt: date, status, message: text,
@@ -41,6 +47,7 @@ const industrySchema = z.strictObject({
   coverage: z.strictObject({ kind: z.enum(['complete_returned_response', 'partial', 'unknown', 'unavailable']), page: id.max(500).nullable(), pages: id.nullable(), nextPage: id.max(500).nullable(), previousPage: id.max(500).nullable(), pageLimitReached: z.boolean(), rows: jobCount }),
   freshness,
   summary: z.strictObject({ jobs: jobCount, active: jobCount, ready: jobCount, paused: jobCount, activePastEnd: jobCount, activeDueWithin24h: jobCount, unknownBlueprintNames: jobCount, unknownProductNames: jobCount }).nullable(),
+  schedule: industrySchedule.nullable(),
   statusCounts: z.array(z.strictObject({ status: jobStatus, count: jobCount })).max(6),
   activityCounts: z.array(z.strictObject({ activityId: id, label: name, count: jobCount })).max(5000),
   jobs: z.array(z.strictObject({ jobId: id, activityId: id, activityLabel: name, status: jobStatus, blueprintTypeId: id, blueprintName: name, productTypeId: id.nullable(), productName: name.nullable(), runs: count, startAt: date, endAt: date, durationSeconds: count, pauseAt: date.nullable(), completedAt: date.nullable() })).max(5000),
@@ -92,7 +99,7 @@ export function industryAnalyticsResponse(value: unknown, input: IndustryAnalyti
   if (result.characterId !== selected.characterId || result.entity !== selected.entity || result.includeCompleted !== (selected.includeCompleted ?? false) || coverage.page !== page ||
       result.scope !== (corporation ? 'esi-industry.read_corporation_jobs.v1' : 'esi-industry.read_character_jobs.v1') || coverage.previousPage !== (page !== null && page > 1 ? page - 1 : null) || !corporation && result.corporationId !== null) throw invalid();
   if (!available(result.status)) {
-    if (result.corporationId !== null || coverage.kind !== 'unavailable' || coverage.rows !== 0 || coverage.pages !== null || coverage.nextPage !== null || coverage.pageLimitReached || result.summary !== null || result.jobs.length || result.statusCounts.length || result.activityCounts.length || !blankFreshness(result.freshness)) throw invalid();
+    if (result.corporationId !== null || coverage.kind !== 'unavailable' || coverage.rows !== 0 || coverage.pages !== null || coverage.nextPage !== null || coverage.pageLimitReached || result.summary !== null || result.schedule !== null || result.jobs.length || result.statusCounts.length || result.activityCounts.length || !blankFreshness(result.freshness)) throw invalid();
     return result;
   }
   const more = coverage.pages === null || page === null ? null : page < coverage.pages;
@@ -110,6 +117,20 @@ export function industryAnalyticsResponse(value: unknown, input: IndustryAnalyti
       summary.unknownBlueprintNames > jobs.filter(job => job.blueprintName === `Type ${job.blueprintTypeId}`).length || summary.unknownProductNames > jobs.filter(job => job.productTypeId !== null && job.productName === `Type ${job.productTypeId}`).length ||
       result.status !== (kind === 'complete_returned_response' && result.freshness.state === 'fresh' && summary.unknownBlueprintNames === 0 && summary.unknownProductNames === 0 ? 'ready' : 'partial') ||
       jobs.some(job => job.activityLabel !== (activityLabels[job.activityId] ?? `Activity ${job.activityId}`) || Date.parse(job.endAt) < Date.parse(job.startAt) || (job.productTypeId === null) !== (job.productName === null))) throw invalid();
+  // Validate every schedule value independently against the accepted rows and
+  // completion timestamp; a plausible aggregate alone is not evidence.
+  const schedule = result.schedule;
+  if (schedule === null || schedule.asOf !== result.generatedAt) throw invalid();
+  const buckets = [0, 0, 0, 0, 0], days = new Map<string, number>();
+  for (const job of jobs) {
+    if (job.status !== 'active') continue;
+    const offset = Date.parse(job.endAt) - generated;
+    buckets[offset <= 0 ? 0 : offset <= 86400000 ? 1 : offset <= 604800000 ? 2 : offset <= 2592000000 ? 3 : 4]++;
+    if (offset > 0 && offset <= 2592000000) { const day = job.endAt.slice(0, 10); days.set(day, (days.get(day) ?? 0) + 1); }
+  }
+  const actual = [schedule.activePastEndJobs, schedule.activeNext24hJobs, schedule.activeDays2To7Jobs, schedule.activeDays8To30Jobs, schedule.activeLaterJobs];
+  const daily = [...days].sort(([a], [b]) => a.localeCompare(b));
+  if (actual.some((value, index) => value !== buckets[index]) || schedule.daily.length !== daily.length || schedule.daily.some((row, index) => row.date !== daily[index][0] || row.activeJobs !== daily[index][1])) throw invalid();
   return result;
 }
 
