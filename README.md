@@ -7,6 +7,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `connection_status` | Connected characters, granted scopes and setup URLs |
 | `character_overview` | The personal dashboard’s six summaries, with per-section permissions, coverage and freshness |
 | `character_training_report` | Compact skill, attribute and planned-training briefing with upcoming finishes and omitted-row counts |
+| `character_clone_report` | Separate active-implant and stored-clone evidence, full received counts and bounded previews without clone names or locations |
 | `wallet_activity_report` | One journal page’s cash-flow totals and categories, with the latest thirty returned UTC dates and explicit omissions |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
 | `contracts_report` | One contracts-page briefing with status/type counts and up to twenty upcoming offer expirations |
@@ -202,6 +203,8 @@ The **Clones & implants** dashboard loads the selected character’s jump clones
 The jump-clone table and implant-count chart show response-local clone rows, reported location IDs/kinds and installed implant type entries. Loading this view reveals those clone and home-location IDs. Custom clone names and raw jump-clone IDs are omitted, and no location/name resolver is called. Implant labels come from the pinned public catalog, with exact type IDs and an explicit fallback for unmapped types. Repeated implant type entries remain reported occurrences rather than silently disappearing.
 
 Reported clone-jump and station-change dates are shown as timestamps. Missing dates and optional home-location fields stay unknown. The dashboard does not infer jump readiness, clone capacity, implant bonuses, value or whether a facility is accessible. One load accepts at most 100 jump clones and 64 implant entries per clone or active-implant response; oversized or malformed feeds fail explicitly. Loads are manual, cancellable and clear on refresh, character changes or leaving the view. No account history, new permissions or game writes are added. See the [dated ESI schema](https://esi.evetech.net/meta/openapi.json?compatibility_date=2026-10-31) and [CCP’s jump-clone guide](https://support.eveonline.com/hc/en-us/articles/203217202-Jump-Clones) for provider fields and the separate in-game requirements.
+
+In chat, `character_clone_report` reads those same two feeds for one owned character. It retains each feed's permission, status and freshness separately, with full accepted counts and previews of at most twenty active implant entries, twenty stored clones and eight implant entries per shown clone. Repeated type occurrences remain repeated, and omitted counts stay explicit. Public implant labels are limited to 128 Unicode characters with truncation flags; exact type IDs remain available. Custom clone names, persistent clone IDs, home and stored-clone locations are omitted. Unavailable sections remain unknown, and jump/station-change timestamps do not imply readiness, capacity, bonuses or value. The report adds no reads beyond the existing two feeds, settings, permissions, saved history or game writes.
 
 ## Reputation and loyalty
 
