@@ -1,7 +1,7 @@
 import { EveError, listConnections, readCharacterData, readCorporationData } from './eve';
 import { overviewDate } from './overview-summary';
 import { findPublishedManufacturingItem } from './manufacturing-catalog';
-import type { IndustryAnalytics, IndustryAnalyticsArgs, IndustryJob, IndustryJobStatus } from './industry-analytics-types';
+import type { IndustryAnalytics, IndustryAnalyticsArgs, IndustryJob, IndustryJobStatus, IndustrySchedule } from './industry-analytics-types';
 
 type DatasetArgs = { characterId: number; dataset: string; parameters?: Record<string, unknown> };
 type Dependencies = {
@@ -26,6 +26,7 @@ const limitations = [
   'Completed jobs are included only when explicitly requested, within EVE’s available past-90-day window. This is not a lifetime history or a complete calendar-period report.',
   'Status counts are reported by EVE. An active job past its reported end can reflect delayed data; it is not proof of readiness, delivery, success or output ownership.',
   'Timeline bars use reported start and end dates, including paused or historical jobs. They do not establish current progress, a guaranteed finish, parallel capacity or available job slots.',
+  'Schedule buckets partition reported-active jobs at load time. Daily counts show future reported ends within thirty rolling days, grouped by UTC date; ready and paused jobs keep their reported status and are not included in those buckets.',
   'Runs mean different things for manufacturing, copying and other activities. They are shown per job and never summed into a common output quantity. Costs, profit and output value are not calculated.',
   'Blueprint and product names come from the pinned public catalog. Unknown types retain their numeric ID; an omitted product is not invented. No personal item names or facility lookups are requested.',
   'No installer, completing-character, location, blueprint-item, cost or probability fields are returned. Nothing is saved. The application rejects responses above 5,000 job rows rather than truncating summaries.',
@@ -89,7 +90,7 @@ function blank(selection: Selection, now: number, status: IndustryAnalytics['sta
     characterId: selection.characterId, entity: selection.entity, corporationId: null, includeCompleted: selection.includeCompleted,
     generatedAt: new Date(now).toISOString(), status, message, scope: scopes[selection.entity],
     coverage: { kind: 'unavailable', page: selection.page, pages: null, nextPage: null, previousPage: selection.page !== null && selection.page > 1 ? selection.page - 1 : null, pageLimitReached: false, rows: 0 },
-    freshness: { state: 'unknown', retrievedAt: null, cacheExpires: null, lastModified: null }, summary: null, statusCounts: [], activityCounts: [], jobs: [], limitations: [...limitations],
+    freshness: { state: 'unknown', retrievedAt: null, cacheExpires: null, lastModified: null }, summary: null, schedule: null, statusCounts: [], activityCounts: [], jobs: [], limitations: [...limitations],
   };
 }
 function coverage(selection: Selection, pagination: unknown, rows: number): IndustryAnalytics['coverage'] {
@@ -105,6 +106,27 @@ function coverage(selection: Selection, pagination: unknown, rows: number): Indu
   if (pagination.nextPage !== nextPage || pagination.pageLimit !== undefined && pagination.pageLimit !== 500 ||
       pagination.morePagesAvailable !== undefined && pagination.morePagesAvailable !== more || pagination.pageLimitReached !== undefined && pagination.pageLimitReached !== pageLimitReached) return invalid();
   return { kind: pages === null ? 'unknown' : page === 1 && pages === 1 ? 'complete_returned_response' : 'partial', page, pages, nextPage, previousPage: page > 1 ? page - 1 : null, pageLimitReached, rows };
+}
+function schedule(jobs: IndustryJob[], completed: number): IndustrySchedule {
+  const day = 86400000, daily = new Map<string, number>();
+  const result: IndustrySchedule = { asOf: new Date(completed).toISOString(), horizonDays: 30,
+    activePastEndJobs: 0, activeNext24hJobs: 0, activeDays2To7Jobs: 0,
+    activeDays8To30Jobs: 0, activeLaterJobs: 0, daily: [] };
+  for (const job of jobs) {
+    if (job.status !== 'active') continue;
+    const remaining = Date.parse(job.endAt) - completed;
+    if (remaining <= 0) result.activePastEndJobs++;
+    else if (remaining <= day) result.activeNext24hJobs++;
+    else if (remaining <= 7 * day) result.activeDays2To7Jobs++;
+    else if (remaining <= 30 * day) result.activeDays8To30Jobs++;
+    else result.activeLaterJobs++;
+    if (remaining > 0 && remaining <= 30 * day) {
+      const date = job.endAt.slice(0, 10);
+      daily.set(date, (daily.get(date) ?? 0) + 1);
+    }
+  }
+  result.daily = [...daily].sort(([left], [right]) => left.localeCompare(right)).map(([date, activeJobs]) => ({ date, activeJobs }));
+  return result;
 }
 function summarize(selection: Selection, response: unknown, completed: number): IndustryAnalytics {
   if (!record(response) || response.characterId !== selection.characterId || response.dataset !== 'industry_jobs' ||
@@ -147,7 +169,7 @@ function summarize(selection: Selection, response: unknown, completed: number): 
     (selection.includeCompleted ? 'Completed jobs were requested within EVE’s available past-90-day window. ' : 'Completed jobs were not requested. ') +
     `Counts describe returned records; source freshness is ${freshness.state}. No history is saved.`;
   return { ...blank(selection, completed, complete ? 'ready' : 'partial', message), corporationId: selection.entity === 'corporation' ? response.corporationId as number : null,
-    coverage: selectedCoverage, freshness, summary, statusCounts, activityCounts: [...activityCounts.values()].sort((left, right) => right.count - left.count || left.activityId - right.activityId), jobs };
+    coverage: selectedCoverage, freshness, summary, schedule: schedule(jobs, completed), statusCounts, activityCounts: [...activityCounts.values()].sort((left, right) => right.count - left.count || left.activityId - right.activityId), jobs };
 }
 
 /** One owned response; no follow-up page, public lookup, persistence or game mutation. */
