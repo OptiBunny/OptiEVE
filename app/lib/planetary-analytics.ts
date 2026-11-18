@@ -118,7 +118,9 @@ function layout(data: unknown) {
       installedAt: optionalDate(pin, 'install_time'), lastCycleStartedAt: optionalDate(pin, 'last_cycle_start'), expiresAt: optionalDate(pin, 'expiry_time') });
   }
   extractors.sort((left, right) => left.expiresAt === null ? right.expiresAt === null ? left.privatePinId - right.privatePinId : 1 : right.expiresAt === null ? -1 : left.expiresAt.localeCompare(right.expiresAt) || left.privatePinId - right.privatePinId);
-  return { pins: data.pins.length, extractors: extractors.map(({ privatePinId: _omitted, ...row }, index) => ({ reference: index + 1, ...row })) };
+  return { pins: data.pins.length, extractors: extractors.map(({ typeId, typeName, productTypeId, productName, headCount, cycleTimeSeconds, quantityPerCycle, installedAt, lastCycleStartedAt, expiresAt }, index) => ({
+    reference: index + 1, typeId, typeName, productTypeId, productName, headCount, cycleTimeSeconds, quantityPerCycle, installedAt, lastCycleStartedAt, expiresAt,
+  })) };
 }
 function schedule(rows: PlanetaryExtractor[], at: number): PlanetarySchedule {
   const result: PlanetarySchedule = { asOf: new Date(at).toISOString(), horizonDays: 30, pastExpiryPins: 0, next24hPins: 0, days2To7Pins: 0, days8To30Pins: 0, laterPins: 0, missingExpiryPins: 0, daily: [] }, daily = new Map<string, number>();

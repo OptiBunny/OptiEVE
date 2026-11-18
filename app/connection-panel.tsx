@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { callbackError, connectionAccessPreset, connectionRequest, connectionStatus, ConnectionResponseError, reconnectAuthorization, reconnectReviewIsCurrent, reviewReconnect, selectedConnectionScopes, signInUrl, type ConnectionStatus, type ReconnectReview } from './lib/connection-client';
 import OverviewPanel from './overview-panel';
 import { overviewDestination, type OverviewShortcut, type OverviewDestination } from './lib/overview-navigation';
@@ -31,18 +31,19 @@ export default function ConnectionPanel(){
  const [statusLoading,setStatusLoading]=useState(true),[statusError,setStatusError]=useState(''),[signedOut,setSignedOut]=useState(false);
  const [tab,setTab]=useState<WorkspaceDestination>('overview');
  const [handoff,setHandoff]=useState<OverviewHandoff|null>(null);
- const [,setNavigationRevision]=useState(0);
+ const [navigationRevision,setNavigationRevision]=useState(0);
  const navigationEpoch=useRef(0),handoffRef=useRef<OverviewHandoff|null>(null);
  const navigationState=useRef<{status:ConnectionStatus|null;ready:boolean;tab:WorkspaceDestination}>({status:null,ready:false,tab:'overview'});
- navigationState.current={status,ready:!!status?.configured&&!statusLoading&&!statusError&&!signedOut&&!busy,tab};
- function selectTab(next:WorkspaceDestination){if(navigationState.current.tab===next&&!handoffRef.current)return;navigationEpoch.current++;setNavigationRevision(value=>value+1);navigationState.current.tab=next;handoffRef.current=null;setHandoff(null);setTab(next);}
+ const navigationReady=!!status?.configured&&!statusLoading&&!statusError&&!signedOut&&!busy;
+ useLayoutEffect(()=>{navigationState.current={status,ready:navigationReady,tab};return()=>{navigationState.current.ready=false;};},[status,navigationReady,tab,navigationRevision]);
+ function selectTab(next:WorkspaceDestination){if(navigationState.current.tab===next&&!handoffRef.current)return;setNavigationRevision(++navigationEpoch.current);navigationState.current.tab=next;handoffRef.current=null;setHandoff(null);setTab(next);}
  const [corporationFeatures,setCorporationFeatures]=useState<string[]>([]);
  const [accessPreset,setAccessPreset]=useState<'character'|'all'|'custom'>('character');
  const [reconnectReview,setReconnectReview]=useState<ReconnectReview|null>(null);
  const accessReview=useRef<HTMLElement|null>(null);
  const requestSequence=useRef(0);
  const reload=useCallback(async()=>{
-  navigationEpoch.current++;if(handoffRef.current)setTab('overview');handoffRef.current=null;setHandoff(null);navigationState.current.ready=false;
+  setNavigationRevision(++navigationEpoch.current);if(handoffRef.current)setTab('overview');handoffRef.current=null;setHandoff(null);navigationState.current.ready=false;
   const sequence=++requestSequence.current;setStatusLoading(true);setStatusError('');setSignedOut(false);
   try{const value=connectionStatus(await connectionRequest('status'));if(sequence!==requestSequence.current)return false;setStatus(value);setClientId(value.clientId||'');setReconnectReview(current=>current&&reconnectReviewIsCurrent(value,current)?current:null);return true;}
   catch(e){if(sequence!==requestSequence.current)return false;setStatus(null);setReconnectReview(null);setStatusError((e as Error).message);setSignedOut(e instanceof ConnectionResponseError&&e.status===401);return false;}
@@ -66,14 +67,14 @@ export default function ConnectionPanel(){
  function reconnect(id:number){if(!status)return;try{setReconnectReview(reviewReconnect(status,id));setError('');setNotice('');accessReview.current?.focus();accessReview.current?.scrollIntoView({block:'start'});}catch(e){setError((e as Error).message);}}
  async function disconnect(id:number){setBusy(true);setError('');try{await connectionRequest('disconnect',{characterId:id});setNotice('Character removed and pending sign-ins cancelled. You can also revoke the app on EVE’s Authorized Applications page.');await reload();}catch(e){setError((e as Error).message);if(e instanceof ConnectionResponseError&&e.status===401)void reload();}finally{setBusy(false);}}
  async function copy(value:string){try{await navigator.clipboard.writeText(value);setNotice('Copied.');}catch{setError('Copy unavailable. Select and copy the value shown.');}}
- const context=JSON.stringify(status?.characters??[]),callbackEpoch=navigationEpoch.current,callbackSequence=requestSequence.current;
+ const context=JSON.stringify(status?.characters??[]),callbackEpoch=navigationRevision;
  const handoffIsCurrent=!handoff||(handoff.context===context&&status?.characters.some(character=>character.characterId===handoff.shortcut.characterId));
  const seed=handoffIsCurrent?handoff:null;
  function openOverviewSection(shortcut:OverviewShortcut){
   const live=navigationState.current,target=overviewDestination(shortcut);
-  if(!target||!live.ready||live.tab!=='overview'||navigationEpoch.current!==callbackEpoch||requestSequence.current!==callbackSequence||JSON.stringify(live.status?.characters??[])!==context||!live.status?.characters.some(character=>character.characterId===shortcut.characterId))return;
+  if(!target||!live.ready||live.tab!=='overview'||navigationEpoch.current!==callbackEpoch||JSON.stringify(live.status?.characters??[])!==context||!live.status?.characters.some(character=>character.characterId===shortcut.characterId))return;
   const next={shortcut:{sectionId:shortcut.sectionId,characterId:shortcut.characterId,view:shortcut.view},target,context,generation:++navigationEpoch.current};
-  handoffRef.current=next;setHandoff(next);setTab(target.destination);
+  setNavigationRevision(next.generation);handoffRef.current=next;navigationState.current.tab=target.destination;setHandoff(next);setTab(target.destination);
  }
  const features=status?.corporationFeatures??[];
  const selection={corporation,corporationFeatures};
@@ -102,7 +103,7 @@ export default function ConnectionPanel(){
   {tab==='inventory'&&status&&!statusLoading&&<InventoryAnalyticsPanel key={'inventory-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='jobs'&&status&&!statusLoading&&handoffIsCurrent&&<IndustryAnalyticsPanel key={'jobs-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} initialEntity={seed?.target.entity} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='wallet'&&status&&!statusLoading&&handoffIsCurrent&&<div key={'wallet-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')}><WalletAnalyticsPanel initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/><WalletHistoryPanel initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/></div>}
-  {tab==='overview'&&status&&!statusLoading&&<OverviewPanel onOpenSection={navigationState.current.ready?openOverviewSection:undefined} key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='overview'&&status&&!statusLoading&&<OverviewPanel onOpenSection={navigationReady?openOverviewSection:undefined} key={JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='corporation'&&status&&!statusLoading&&handoffIsCurrent&&<CorporationPanel key={JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} initialView={seed?.target.corporationView} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='reputation'&&status&&!statusLoading&&<CharacterPanel key={'reputation-'+JSON.stringify(status.characters)} mode="reputation" characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='industry'&&status&&!statusLoading&&<CharacterPanel key={'industry-'+JSON.stringify(status.characters)} mode="industry" characters={status.characters} openConnections={()=>selectTab('connections')}/> }
