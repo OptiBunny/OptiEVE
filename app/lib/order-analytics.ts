@@ -1,7 +1,7 @@
 import { EveError, listConnections, readEve, type ReadArgs } from './eve';
 import { overviewDate } from './overview-summary';
 import { findPublishedManufacturingItem } from './manufacturing-catalog';
-import type { AnalyticsOrder, OrderAnalytics, OrderAnalyticsArgs } from './order-analytics-types';
+import type { AnalyticsOrder, OrderAnalytics } from './order-analytics-types';
 
 type Dependencies = { connections: (user: string) => Promise<{ characterId: number; scopes: string[] }[]>; orders: (user: string, args: ReadArgs, signal?: AbortSignal) => Promise<unknown>; now?: () => number };
 type Selection = { characterId: number; entity: 'character' | 'corporation'; page: number | null };

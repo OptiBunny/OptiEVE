@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
 import { ConnectionResponseError, type Character } from './lib/connection-client';
 import { savedFittingsRequest } from './lib/saved-fittings-client';
 import type { SavedFittings, SavedFitting, SavedFittingType, FittingFlagGroup } from './lib/saved-fittings-types';
@@ -51,22 +51,27 @@ export function SavedFittingsResults({ result, isCurrent }: { result: SavedFitti
 }
 export default function SavedFittingsPanel({ characters, openConnections, initialCharacterId }: { characters: Character[]; openConnections: () => void; initialCharacterId?: number }) {
   const id = useId(), [characterId, setCharacterId] = useState(() => initialCharacterId === undefined ? characters[0]?.characterId ?? 0 : characters.some(row => row.characterId === initialCharacterId) ? initialCharacterId : 0);
-  const [result, setResult] = useState<SavedFittings | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [signedOut, setSignedOut] = useState(false), [generation, setGeneration] = useState(0);
-  const request = useRef<AbortController | null>(null), accepted = useRef<SavedFittings | null>(null), mounted = useRef(true), currentGeneration = useRef(0), selection = useRef('');
-  const context = JSON.stringify([characterId, characters]); selection.current = context;
+  const [received, setResult] = useState<SavedFittings | null>(null), [loading, setBusy] = useState(false), [feedbackContext, setFeedbackContext] = useState(''), [errorMessage, setError] = useState(''), [needsSignIn, setSignedOut] = useState(false), [generation, setGeneration] = useState(0);
+  const request = useRef<AbortController | null>(null), accepted = useRef<SavedFittings | null>(null), [acceptedContext, setAcceptedContext] = useState(''), mounted = useRef(true), currentGeneration = useRef(0), selection = useRef<{ value: string } | null>(null);
+  const context = JSON.stringify([characterId, characters]);
+  const busy = loading && feedbackContext === context, error = feedbackContext === context ? errorMessage : '', signedOut = feedbackContext === context && needsSignIn;
+  const [renderedContext, setRenderedContext] = useState({ value: context });
+  if (renderedContext.value !== context) { setRenderedContext({ value: context }); setAcceptedContext(''); setResult(null); setFeedbackContext(context); setBusy(false); setError(''); setSignedOut(false); }
+  useLayoutEffect(() => { selection.current = renderedContext; return () => { if (selection.current !== renderedContext) return; selection.current = null; accepted.current = null; request.current?.abort(); request.current = null; }; }, [renderedContext]);
+  const result = received !== null && acceptedContext === context ? received : null;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; accepted.current = null; request.current?.abort(); }; }, []);
-  function clear() { request.current?.abort(); request.current = null; accepted.current = null; setResult(null); setBusy(false); setError(''); setSignedOut(false); setGeneration(++currentGeneration.current); }
+  function clear() { setFeedbackContext(context); request.current?.abort(); request.current = null; accepted.current = null; setAcceptedContext(''); setResult(null); setBusy(false); setError(''); setSignedOut(false); setGeneration(++currentGeneration.current); }
   async function load() {
-    if (!mounted.current || selection.current !== context || !characters.some(row => row.characterId === characterId)) return;
+    if (!mounted.current || selection.current !== renderedContext || !characters.some(row => row.characterId === characterId)) return;
     clear(); const controller = new AbortController(); request.current = controller; setBusy(true);
-    try { const value = await savedFittingsRequest({ characterId }, controller.signal); if (mounted.current && selection.current === context && request.current === controller && !controller.signal.aborted) { accepted.current = value; setResult(value); } }
-    catch (failure) { if (!mounted.current || selection.current !== context || request.current !== controller || controller.signal.aborted) return; setError((failure as Error).message); setSignedOut(failure instanceof ConnectionResponseError && failure.status === 401); }
-    finally { if (mounted.current && selection.current === context && request.current === controller) setBusy(false); }
+    try { const value = await savedFittingsRequest({ characterId }, controller.signal); if (mounted.current && selection.current === renderedContext && request.current === controller && !controller.signal.aborted) { accepted.current = value; setAcceptedContext(context); setResult(value); } }
+    catch (failure) { if (!mounted.current || selection.current !== renderedContext || request.current !== controller || controller.signal.aborted) return; setError((failure as Error).message); setSignedOut(failure instanceof ConnectionResponseError && failure.status === 401); }
+    finally { if (mounted.current && selection.current === renderedContext && request.current === controller) setBusy(false); }
   }
-  const isCurrent = () => mounted.current && selection.current === context && currentGeneration.current === generation && result !== null && accepted.current === result && !busy;
+  const isCurrent = () => mounted.current && selection.current === renderedContext && currentGeneration.current === generation && result !== null && accepted.current === result && !busy;
   if (!characters.length) return <section className="panel"><h2>Saved fittings</h2><p>Connect a character to read saved fitting plans.</p><button type="button" className="button secondary" onClick={openConnections}>Set up a connection</button></section>;
   return <section aria-labelledby={id + '-heading'}><div className="overview-heading"><div><p className="eyebrow">SAVED FITTINGS · READ ONLY</p><h2 id={id + '-heading'}>Saved fittings</h2></div><button type="button" className="small" onClick={openConnections}>Manage connections</button></div>
-    <div className="overview-controls"><div><label htmlFor={id + '-character'}>Character</label><select id={id + '-character'} value={characterId} onChange={event => { clear(); setCharacterId(Number(event.target.value)); }}>{characterId === 0 && <option value={0}>Choose a connected character</option>}{characters.map(row => <option key={row.characterId} value={row.characterId}>{row.name}</option>)}</select></div><button type="button" className="button secondary" disabled={busy || !characters.some(row => row.characterId === characterId)} onClick={() => void load()}>{busy ? 'Loading saved fittings…' : result ? 'Refresh saved fittings' : 'Load saved fittings'}</button>{busy && <button type="button" className="small" onClick={clear}>Cancel</button>}</div>
+    <div className="overview-controls"><div><label htmlFor={id + '-character'}>Character</label><select id={id + '-character'} value={characterId} onChange={event => { selection.current = null; setRenderedContext({ value: context }); clear(); setCharacterId(Number(event.target.value)); }}>{characterId === 0 && <option value={0}>Choose a connected character</option>}{characters.map(row => <option key={row.characterId} value={row.characterId}>{row.name}</option>)}</select></div><button type="button" className="button secondary" disabled={busy || !characters.some(row => row.characterId === characterId)} onClick={() => void load()}>{busy ? 'Loading saved fittings…' : result ? 'Refresh saved fittings' : 'Load saved fittings'}</button>{busy && <button type="button" className="small" onClick={clear}>Cancel</button>}</div>
     <p className="overview-hint">One manual read of this character’s saved plans under its existing read permission. This does not inspect assets, skills, prices or dogma, and adds no background reads or saved history.</p>
     {error && <div className="alert" role="alert">{error}{signedOut && <p><a href="/signin-with-chatgpt?return_to=%2F" target="_top">Sign in with ChatGPT</a></p>}</div>}<p className="overview-state" role="status">{busy ? 'Reading the selected character’s saved plans…' : result ? result.message : 'Choose a character, then load saved fittings.'}</p>
     {result && <><div className="overview-coverage"><strong>Returned saved-fitting response</strong><span>{result.summary === null ? 'Saved-plan and item-record counts unavailable' : `${result.summary.fittings} saved plans · ${result.summary.itemRecords} item records`} · {result.status}</span></div><SavedFittingsResults key={generation} result={result} isCurrent={isCurrent}/>{result.status === 'needs_permission' && <button type="button" className="small" onClick={openConnections}>Review access</button>}

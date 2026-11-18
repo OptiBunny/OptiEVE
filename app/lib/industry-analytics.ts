@@ -1,7 +1,7 @@
 import { EveError, listConnections, readCharacterData, readCorporationData } from './eve';
 import { overviewDate } from './overview-summary';
 import { findPublishedManufacturingItem } from './manufacturing-catalog';
-import type { IndustryAnalytics, IndustryAnalyticsArgs, IndustryJob, IndustryJobStatus, IndustrySchedule } from './industry-analytics-types';
+import type { IndustryAnalytics, IndustryJob, IndustryJobStatus, IndustrySchedule } from './industry-analytics-types';
 
 type DatasetArgs = { characterId: number; dataset: string; parameters?: Record<string, unknown> };
 type Dependencies = {

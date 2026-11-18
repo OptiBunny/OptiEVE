@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useLayoutEffect, useId, useRef, useState } from 'react';
 import type { InventoryAnalytics } from './lib/inventory-analytics-types';
 
 export type InventoryTypeSort = 'records' | 'name';
@@ -11,8 +11,8 @@ const label = (name: string, value: number | null, kind: string) => `${name} · 
 /** Local exploration of one validated asset page; quantities never cross type IDs. */
 export default function InventoryTypeExplorer({ result, sort, onSort }: { result: InventoryAnalytics; sort: InventoryTypeSort; onSort: (sort: InventoryTypeSort) => void }) {
   const id = useId(), [filters, setFilters] = useState<Filters>(initial), mounted = useRef(true), current = useRef({ result, filters });
-  current.current = { result, filters };
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { current.current = { result, filters }; }, [result, filters]);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const isCurrent = () => mounted.current && current.current.result === result && current.current.filters === filters;
   function change(next: Filters) { if (!isCurrent()) return; current.current = { result, filters: next }; setFilters(next); }
   const groups = result.groups.filter(group => filters.category === 'all' || key(group.categoryId) === filters.category);

@@ -123,7 +123,7 @@ function summarize(selected: Selection, response: unknown, completed: number): I
     types: [...types.values()].sort((a, b) => b.records - a.records || a.typeId - b.typeId),
     categories: [...categories.values()].sort((a, b) => b.records - a.records || (a.categoryId ?? Number.MAX_SAFE_INTEGER) - (b.categoryId ?? Number.MAX_SAFE_INTEGER)),
     groups: [...groups.values()].sort((a, b) => b.records - a.records || (a.groupId ?? Number.MAX_SAFE_INTEGER) - (b.groupId ?? Number.MAX_SAFE_INTEGER)),
-    locations: [...locations.values()].map(({ typeIds: _typeIds, ...location }) => location).sort((a, b) => b.records - a.records || a.locationId - b.locationId),
+    locations: [...locations.values()].map(({ locationId, kind, records, typeCount }) => ({ locationId, kind, records, typeCount })).sort((a, b) => b.records - a.records || a.locationId - b.locationId),
   };
 }
 /** Server-only reuse of the bounded asset page validator; callers must project private IDs away. */
