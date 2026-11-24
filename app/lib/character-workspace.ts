@@ -16,7 +16,11 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const integer = (value: unknown, minimum = 0): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum;
 const invalid = (): never => { throw new OverviewDataError(); };
 const count = (label: string, value: number): CharacterWorkspaceMetric => ({ label, value, unit: 'count' });
-const date = (value: unknown): string => overviewDate(value) ?? invalid();
+const date = (value: unknown): string => {
+  const normalized = overviewDate(value);
+  // Applying an offset must not leave the browser's four-digit UTC-year domain.
+  return normalized?.length === 24 ? normalized : invalid();
+};
 type Dependencies = {
   connections: (user: string) => Promise<{ characterId: number; scopes: string[] }[]>;
   character: (user: string, request: { characterId: number; dataset: string; parameters?: { page: number } }, signal?: AbortSignal) => Promise<unknown>;
@@ -27,6 +31,15 @@ type Table = Pick<CharacterWorkspace, 'metrics' | 'columns' | 'rows' | 'coverage
 type UnpagedRequest = Exclude<CharacterWorkspaceRequest, { view: 'faction_warfare' } | { view: 'blueprints' } | { view: 'mining' }>;
 type BlueprintRequest = Extract<CharacterWorkspaceRequest, { view: 'blueprints' }>;
 type MiningRequest = Extract<CharacterWorkspaceRequest, { view: 'mining' }>;
+
+// Bound the caller's wait even when storage or a provider ignores cancellation.
+async function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted(); let cancel: () => void = () => {};
+  const interrupted = new Promise<never>((_, reject) => { cancel = () => reject(signal.reason); signal.addEventListener('abort', cancel, { once: true }); });
+  void interrupted.catch(() => {});
+  try { const value = await Promise.race([work(), interrupted]); signal.throwIfAborted(); return value; }
+  finally { signal.removeEventListener('abort', cancel); }
+}
 
 function args(value: unknown): CharacterWorkspaceRequest {
   const fail = (): never => { throw new EveError('Choose one connected character and a supported character view.'); };
@@ -185,7 +198,7 @@ async function publicLabels(selected: CharacterWorkspaceRequest, rendered: Table
     }
     if (!expected.size || expected.size > 200 || !dependencies.publicNames) return fallback;
     signal.throwIfAborted();
-    const result = await dependencies.publicNames([...expected.keys()], signal);
+    const result = await abortable(() => dependencies.publicNames!([...expected.keys()], signal), signal);
     signal.throwIfAborted();
     if (!record(result) || !overviewDate(result.retrievedAt) || !Array.isArray(result.data) || result.data.length > expected.size) return invalid();
     const seen = new Set<number>();
@@ -209,12 +222,12 @@ export function createCharacterWorkspaceReader(dependencies: Dependencies) {
     if (!user || typeof user !== 'string') throw new EveError('Sign in to this private connector first.', 401);
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(55000)]) : AbortSignal.timeout(55000);
     signal.throwIfAborted();
-    const connection = (await dependencies.connections(user)).find(row => row.characterId === selected.characterId);
+    const connection = (await abortable(() => dependencies.connections(user), signal)).find(row => row.characterId === selected.characterId);
     if (!connection) throw new EveError('Choose a character connected to this private connector.', 404);
     signal.throwIfAborted();
     if (!connection.scopes.includes(scopes[selected.view])) return blank(selected, now(), 'needs_permission', 'This character has not granted the required read permission. Explicitly choose character read access and authorize again; existing grants are not changed automatically.');
     try {
-      const result = await dependencies.character(user, { characterId: selected.characterId, dataset: selected.view, ...(selected.view === 'blueprints' || selected.view === 'mining' ? { parameters: { page: selected.page ?? 1 } } : {}) }, signal);
+      const result = await abortable(() => dependencies.character(user, { characterId: selected.characterId, dataset: selected.view, ...(selected.view === 'blueprints' || selected.view === 'mining' ? { parameters: { page: selected.page ?? 1 } } : {}) }, signal), signal);
       signal.throwIfAborted();
       if (!record(result) || (result.entity !== undefined && result.entity !== 'character') || result.characterId !== selected.characterId || result.dataset !== selected.view || !overviewDate(result.retrievedAt) || !record(result.pagination) || (selected.view !== 'blueprints' && selected.view !== 'mining' && result.pagination.kind !== 'none')) return invalid();
       const rendered = selected.view === 'standings' ? standings(selected, result.data) : selected.view === 'loyalty_points' ? loyalty(selected, result.data) : selected.view === 'blueprints' ? blueprints(selected, result.data, result.pagination) : selected.view === 'research' ? research(selected, result.data) : selected.view === 'planets' ? planets(selected, result.data) : selected.view === 'mining' ? mining(selected, result.data, result.pagination) : warfare(result.data);

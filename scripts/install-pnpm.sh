@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${SITES_ENV_READY:-}" != "1" ]]; then
-  exec "${script_dir}/sites-env.sh" -- "$0" "$@"
+  exec bash "${script_dir}/sites-env.sh" -- bash "${script_dir}/install-pnpm.sh" "$@"
 fi
 
 require_shared=0
@@ -197,17 +197,8 @@ report_store
 trap - EXIT
 if [[ "${prepare_only}" == 1 ]]; then exit 0; fi
 
-# Configuration travels with source without embedding an absolute machine path.
-# A later restricted session selects a private store before its frozen repair.
-configured_store=.sites-runtime/pnpm-store
-if [[ "${store_scope}" == workspace ]]; then
-  configured_store='${SITES_PNPM_SHARED_STORE:-.sites-runtime/pnpm-store}'
-elif [[ "${runtime_root}" != "${SITES_PROJECT_ROOT}/.sites-runtime" ]]; then
-  configured_store='${SITES_RUNTIME_ROOT:-.sites-runtime}/pnpm-store'
-fi
-"${pnpm_command[@]}" config set package-import-method auto --location project
-"${pnpm_command[@]}" config set store-dir "${configured_store}" --location project
-"${pnpm_command[@]}" config set cache-dir "${configured_store}/policy-cache" --location project
+# Keep tracked workspace policy unchanged. The helper supplies the selected
+# store, policy cache and import method as command-line options for this install.
 
 # CI=true lets native pnpm install rebuild modules whose store moved, without a
 # prompt, --force, changing the lockfile, or translating the project into npm.

@@ -149,7 +149,7 @@ export async function connectionRequest(path: 'status' | 'config' | 'connect' | 
     });
     if (response.status === 401) {
       // Release an unread gateway response without retaining its private body.
-      await response.body?.cancel().catch(() => {});
+      void response.body?.cancel().catch(() => {});
       throw new ConnectionResponseError('Sign in to this private connector to load your connection.', 401);
     }
     let value: unknown;

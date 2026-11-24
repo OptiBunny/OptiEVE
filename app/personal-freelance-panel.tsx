@@ -51,7 +51,7 @@ export default function PersonalFreelancePanel({ characters, openConnections, in
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; accepted.current = null; request.current?.abort(); }; }, []);
   function clear() { request.current?.abort(); request.current = null; accepted.current = null; setResult(null); setBusy(false); setError(''); setSignedOut(false); setGeneration(++currentGeneration.current); }
   async function load(jobId?: string) {
-    if (!mounted.current || !characters.some(row => row.characterId === characterId)) return;
+    if (!mounted.current || currentGeneration.current !== generation || !characters.some(row => row.characterId === characterId)) return;
     clear(); const controller = new AbortController(); request.current = controller; setBusy(true);
     try { const value = await personalFreelanceRequest({ characterId, ...(jobId === undefined ? {} : { jobId }) }, controller.signal); if (mounted.current && request.current === controller && !controller.signal.aborted) { accepted.current = value; setResult(value); } }
     catch (failure) { if (!mounted.current || request.current !== controller || controller.signal.aborted) return; setError((failure as Error).message); setSignedOut(failure instanceof ConnectionResponseError && failure.status === 401); }

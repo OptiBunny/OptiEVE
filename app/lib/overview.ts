@@ -30,6 +30,20 @@ type Dependencies = {
 };
 export type OverviewOptions = { signal?: AbortSignal };
 
+async function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted(); let cancel: () => void = () => {};
+  const interrupted = new Promise<never>((_, reject) => {
+    cancel = () => reject(signal.reason);
+    signal.addEventListener('abort', cancel, { once: true });
+  });
+  void interrupted.catch(() => {});
+  try {
+    const value = await Promise.race([work(), interrupted]);
+    signal.throwIfAborted();
+    return value;
+  } finally { signal.removeEventListener('abort', cancel); }
+}
+
 function args(value: unknown): OverviewArgs {
   if (!record(value) || Object.keys(value).some(key => !['characterId', 'view'].includes(key)) || !Object.hasOwn(value, 'characterId') || !positiveId(value.characterId) || !Object.hasOwn(value, 'view') || typeof value.view !== 'string' || !['personal', 'corporation'].includes(value.view)) {
     throw new EveError('Choose one connected character and a personal or corporation overview.');
@@ -46,8 +60,23 @@ function headerDate(value: unknown): string | null {
 }
 function cacheControl(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 512) return null;
-  // Only cache directives reach the browser, never arbitrary upstream header text.
-  const safe = value.split(',').map(item => item.trim().toLowerCase()).filter(item => /^(?:public|private|no-cache|no-store|must-revalidate|immutable|(?:s-maxage|max-age|stale-while-revalidate|stale-if-error)=\d{1,10})$/.test(item));
+  // A quoted extension argument can contain commas and escaped quotes.
+  const directives: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (escaped) { escaped = false; continue; }
+    if (quoted && character === '\\') { escaped = true; continue; }
+    if (character === '"') { quoted = !quoted; continue; }
+    if (character === ',' && !quoted) {
+      directives.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  if (quoted) return null;
+  directives.push(value.slice(start));
+  // Only complete allowlisted directives reach the browser, never extension text.
+  const safe = directives.map(item => item.trim().toLowerCase()).filter(item => /^(?:public|private|no-cache|no-store|must-revalidate|immutable|(?:s-maxage|max-age|stale-while-revalidate|stale-if-error)=\d{1,10})$/.test(item));
   return safe.length ? safe.join(', ') : null;
 }
 function coverage(value: unknown, spec: SectionSpec, view: OverviewView): { value: OverviewSection['coverage']; message: string } {
@@ -71,7 +100,7 @@ export function createOverviewReader(dependencies: Dependencies) {
     if (!user || typeof user !== 'string') throw new EveError('Sign in to this private connector first.', 401);
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(55000)]) : AbortSignal.timeout(55000);
     signal.throwIfAborted();
-    const connection = (await dependencies.connections(user)).find(row => row.characterId === selected.characterId);
+    const connection = (await abortable(() => dependencies.connections(user), signal)).find(row => row.characterId === selected.characterId);
     if (!connection) throw new EveError('Choose a character connected to this private connector.', 404);
     signal.throwIfAborted();
     const specs = selected.view === 'personal' ? personal : corporation;
@@ -90,7 +119,7 @@ export function createOverviewReader(dependencies: Dependencies) {
       }
       try {
         const reader = selected.view === 'personal' ? dependencies.character : dependencies.corporation;
-        const result = await reader(user, { characterId: selected.characterId, dataset: spec.dataset, ...(spec.parameters ? { parameters: spec.parameters } : {}) }, signal);
+        const result = await abortable(() => reader(user, { characterId: selected.characterId, dataset: spec.dataset, ...(spec.parameters ? { parameters: spec.parameters } : {}) }, signal), signal);
         signal.throwIfAborted();
         if (!record(result) || result.characterId !== selected.characterId || result.dataset !== spec.dataset || !overviewDate(result.retrievedAt)) throw new OverviewDataError();
         if (selected.view === 'corporation') {

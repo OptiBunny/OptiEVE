@@ -45,7 +45,7 @@ export async function overviewRequest(args: OverviewArgs, signal: AbortSignal): 
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args),
     });
     if (response.status === 401) {
-      await response.body?.cancel().catch(() => {});
+      void response.body?.cancel().catch(() => {});
       throw new ConnectionResponseError('Sign in to this private connector to load your overview.', 401);
     }
     let value: unknown;

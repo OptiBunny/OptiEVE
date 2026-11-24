@@ -14,7 +14,11 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const integer = (value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 const invalid = (): never => { throw new OverviewDataError(); };
 const optionalNumber = (value: unknown): number | null => value === null || value === undefined ? null : integer(value) ? value : invalid();
-const optionalDate = (value: unknown): string | null => value === null || value === undefined ? null : overviewDate(value) ?? invalid();
+const optionalDate = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  const normalized = overviewDate(value);
+  return normalized?.length === 24 ? normalized : invalid();
+};
 type Dependencies = {
   connections: (user: string) => Promise<{ characterId: number; scopes: string[] }[]>;
   character: (user: string, args: { characterId: number; dataset: string }, signal?: AbortSignal) => Promise<unknown>;
@@ -37,16 +41,36 @@ function headerTime(value: unknown): number | null {
   // Date.parse alone normalizes impossible dates and accepts ambiguous input.
   return Number.isFinite(time) && new Date(time).toUTCString() === value && new Date(time).toISOString().length === 24 ? time : null;
 }
+function cacheDirectives(value: string): string[] | null {
+  const directives: string[] = [];
+  let start = 0, quoted = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (quoted && character === '\\') {
+      // A quoted pair is data, including escaped quotes and backslashes.
+      if (++index === value.length) return null;
+    } else if (character === '"') quoted = !quoted;
+    else if (character === ',' && !quoted) {
+      directives.push(value.slice(start, index)); start = index + 1;
+    }
+  }
+  if (quoted) return null;
+  directives.push(value.slice(start));
+  return directives;
+}
 function cacheExpiry(response: Record<string, unknown>, received: number): string | null {
   const expires = headerTime(response.cacheExpires), date = headerTime(response.responseDate);
   if (response.cacheControl != null && (typeof response.cacheControl !== 'string' || response.cacheControl.length > 512)) return null;
   const control = typeof response.cacheControl === 'string' && response.cacheControl.length <= 512 ? response.cacheControl : '';
-  if (/(?:^|,)\s*(?:no-cache|no-store)(?=\s*(?:,|$))/i.test(control)) return new Date(received).toISOString();
+  // Quoted extension values may contain commas and directive-looking text.
+  const directives = cacheDirectives(control);
+  if (directives === null) return null;
+  if (directives.some(value => /^\s*(?:no-cache|no-store)\s*$/i.test(value))) return new Date(received).toISOString();
   const age = response.cacheAge == null ? 0 : typeof response.cacheAge === 'string' && /^\d{1,10}$/.test(response.cacheAge) ? Number(response.cacheAge) : NaN;
   // Malformed age metadata cannot establish a fresh private snapshot.
   if (!integer(age, 0, 604800)) return null;
-  const maxAgeDirective = /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
-  const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
+  const maxAgeDirective = directives.find(value => /^\s*max-age(?=\s*(?:=|$))/i.test(value));
+  const match = maxAgeDirective && /^\s*max-age=(\d+)\s*$/i.exec(maxAgeDirective), maxAge = match ? Number(match[1]) : null;
   const cached = integer(maxAge, 0, 604800) && date !== null && date <= received + 60000
     ? Math.min(date + maxAge * 1000, received + (maxAge - age) * 1000) : null;
   // Expires can establish an absolute lifetime when max-age is absent. If

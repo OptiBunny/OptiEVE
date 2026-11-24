@@ -90,18 +90,66 @@ export function searchManufacturingItems(input: unknown) {
 }
 
 type StatusDependencies = { fetch?: typeof fetch; now?: () => number };
+function headerDate(value: string | null, now: number): number | null {
+  if (!value || value.length > 100) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    const parsed = Date.parse(value), local = Date.parse(value.slice(0, 19) + 'Z');
+    return Number.isFinite(parsed) && new Date(parsed).toISOString().length === 24 && Number.isFinite(local) &&
+      new Date(local).toISOString().slice(0, 19) === value.slice(0, 19) ? parsed : null;
+  }
+  // HTTP also permits RFC850 and asctime dates. Decode their fields explicitly:
+  // Date.parse alone repairs impossible dates and reads asctime in local time.
+  const imf = /^([a-z]{3}), (\d{2}) ([a-z]{3}) (\d{4}) (\d{2}:\d{2}:\d{2}) GMT$/i.exec(value);
+  const rfc850 = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), (\d{2})-([a-z]{3})-(\d{2}) (\d{2}:\d{2}:\d{2}) GMT$/i.exec(value);
+  const asctime = /^([a-z]{3}) ([a-z]{3}) (\d{2}| \d) (\d{2}:\d{2}:\d{2}) (\d{4})$/i.exec(value);
+  const fields = imf ?? rfc850 ?? (asctime && [asctime[0], asctime[1], asctime[3].trim().padStart(2, '0'), asctime[2], asctime[5], asctime[4]]);
+  if (!fields) return null;
+  const [, weekday, day, monthText, yearText, time] = fields;
+  const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(monthText.toLowerCase()) + 1;
+  if (!month) return null;
+  let year = Number(yearText);
+  const utcText = () => `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${day}T${time}Z`;
+  if (rfc850) {
+    const cutoff = new Date(now), currentYear = cutoff.getUTCFullYear();
+    year += currentYear - currentYear % 100;
+    cutoff.setUTCFullYear(currentYear + 50);
+    if (Date.parse(utcText()) > cutoff.getTime()) year -= 100;
+  }
+  if (!Number.isInteger(year) || year < 0 || year > 9999) return null;
+  const expected = utcText(), parsed = Date.parse(expected);
+  if (!Number.isFinite(parsed)) return null;
+  const date = new Date(parsed);
+  return date.toISOString() === expected.slice(0, -1) + '.000Z' &&
+    date.toUTCString().slice(0, 3).toLowerCase() === weekday.slice(0, 3).toLowerCase() ? parsed : null;
+}
+function cacheDirectives(control: string): string[] | null {
+  // Commas inside a quoted extension value do not start new directives.
+  const parts: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < control.length; index++) {
+    const character = control[index];
+    if (escaped) { escaped = false; continue; }
+    if (quoted && character === '\\') { escaped = true; continue; }
+    if (character === '"') quoted = !quoted;
+    else if (character === ',' && !quoted) { parts.push(control.slice(start, index)); start = index + 1; }
+  }
+  if (quoted) return null;
+  parts.push(control.slice(start));
+  return parts;
+}
 function catalogExpiry(headers: Headers, now: number): string | null {
-  const headerDate = (value: string | null) => value && value.length <= 100 && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().length === 24 ? Date.parse(value) : null;
-  const expires = headerDate(headers.get('expires')), date = headerDate(headers.get('date'));
+  const expires = headerDate(headers.get('expires'), now), date = headerDate(headers.get('date'), now);
   const rawControl = headers.get('cache-control'), control = rawControl && rawControl.length <= 256 && !/[\x00-\x1f\x7f]/.test(rawControl) ? rawControl : null;
   if (rawControl !== null && (rawControl.length > 256 || /[\x00-\x1f\x7f]/.test(rawControl))) return null;
+  const directives = cacheDirectives(control ?? '');
+  if (directives === null) return null;
   const rawAge = headers.get('age'), age = rawAge === null ? 0 : /^\d+$/.test(rawAge) ? Number(rawAge) : NaN;
-  const maxAgeDirective = control && /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
+  const maxAgeDirective = directives.map(directive => /^\s*max-age(?=\s*(?:=|$))([\s\S]*)$/i.exec(directive)).find(Boolean);
   const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
   const maxAgeExpiry = maxAge !== null && integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= now + 60000 ? Math.min(date + maxAge * 1000, now + (maxAge - age) * 1000) : null;
   let expiry = expires === null ? maxAgeExpiry : maxAgeExpiry === null ? expires : Math.min(expires, maxAgeExpiry);
-  if (control && /(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(control)) expiry = now;
-  else if (maxAgeDirective && maxAgeExpiry === null) expiry = null;
+  if (directives.some(directive => /^\s*(?:no-cache|no-store)\s*$/i.test(directive))) expiry = now;
+  else if (!integer(age, 0, 604800) || maxAgeDirective && maxAgeExpiry === null) expiry = null;
   const normalized = expiry === null ? null : new Date(expiry).toISOString();
   return normalized?.length === 24 ? normalized : null;
 }

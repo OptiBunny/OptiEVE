@@ -92,9 +92,9 @@ async function boundedJson(response:Response,maximum:number,signal?:AbortSignal)
  if(!Number.isSafeInteger(maximum)||maximum<1||maximum>2*1024*1024){cancelBody(response);throw new EveError("Invalid private response limit.");}
  return readJsonBody(response,maximum,signal);
 }
-async function jsonResponse(response:Response,maximum?:number,signal?:AbortSignal):Promise<unknown>{
+async function jsonResponse(response:Response,maximum?:number,signal?:AbortSignal,expectedStatus:200|201=200):Promise<unknown>{
  if(!response.ok){cancelBody(response);if(response.status===401)throw new EveError("EVE authorization expired or was revoked. Reconnect the character.",401,undefined,response.status);if(response.status===403)throw new EveError("EVE denied access. The character may be missing the required scope or corporation role.",403,undefined,response.status);if(response.status===420||response.status===429)throw new EveError(rateLimitMessage(response),429,undefined,response.status);throw new EveError(`EVE returned HTTP ${response.status}. Please retry or check the requested data.`,502,undefined,response.status);}
- if(response.status!==200){cancelBody(response);throw new EveError("EVE returned an unexpected response.",502,undefined,response.status);}
+ if(response.status!==expectedStatus){cancelBody(response);throw new EveError("EVE returned an unexpected response.",502,undefined,response.status);}
  return maximum===undefined?readJsonBody(response,ESI_RESPONSE_BYTES,signal):boundedJson(response,maximum,signal);
 }
 async function oauthResponse(response:Response,signal?:AbortSignal){
@@ -135,14 +135,14 @@ async function verifyJwt(token:string,clientId:string,signal?:AbortSignal):Promi
   // refresh behavior. It does not establish that a supplied token is valid.
   // An unrelated response must not evict a cache replaced during either read.
   if(!jwk){if(jwkCache===cacheBeforeRead)jwkCache=selected;throw new Error();}
-  const cacheBeforeImport=jwkCache;let publicKey:CryptoKey;
+  let publicKey:CryptoKey;
   try{if(!rsaInteger(jwk.n)||!rsaInteger(jwk.e))throw new Error();publicKey=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);}catch{
    // A failed old import must not erase a newer concurrent valid cache.
    if(jwkCache===selected)jwkCache=null;
    throw new EveError("EVE signing keys were unavailable.",502,'signing_keys');
   }
-  // Publish a newly fetched matching set only after its selected key imports.
-  if(fetched&&jwkCache===cacheBeforeImport)jwkCache=selected;
+  // Publish only if the cache stayed unchanged through both the read and import.
+  if(fetched&&jwkCache===cacheBeforeRead)jwkCache=selected;
   if(!await crypto.subtle.verify("RSASSA-PKCS1-v1_5",publicKey,decode64(parts[2]),new TextEncoder().encode(`${parts[0]}.${parts[1]}`)))throw new Error();
   const claims=JSON.parse(new TextDecoder().decode(decode64(parts[1]))) as Claims,audiences=Array.isArray(claims.aud)?claims.aud:[claims.aud],now=Date.now()/1000;
   if(!["https://login.eveonline.com","https://login.eveonline.com/","login.eveonline.com"].includes(claims.iss)||!audiences.includes(clientId)||!audiences.includes("EVE Online")||!Number.isFinite(claims.exp)||claims.exp<=now||(claims.nbf!==undefined&&(!Number.isFinite(claims.nbf)||claims.nbf>now+60))||!/^CHARACTER:EVE:\d+$/.test(claims.sub))throw new Error();return claims;
@@ -254,7 +254,7 @@ export async function readEve(user:string,args:ReadArgs,signal?:AbortSignal,opti
  const group=args.dataset.startsWith("wallet")?"wallet":args.dataset;const scopeMap:Record<string,string>=args.entity==="character"?{orders:characterScopes[0],assets:characterScopes[1],wallet:characterScopes[2]}:{orders:corporationScopes[0],assets:corporationScopes[1],wallet:corporationScopes[2]};const required=scopeMap[group];if(!required)throw new EveError("Unsupported read permission.",403);const {row,stored}=await activeToken(user,args.characterId,required,signal);
  let corporationId=row.corporation_id;if(args.entity==="corporation"){const current=characterProfile(await publicCharacter(args.characterId,signal));corporationId=current.corporation_id;}
  const isCorp=args.entity==="corporation",base=isCorp?`/corporations/${corporationId}`:`/characters/${args.characterId}`,suffix=args.dataset==="orders"?"/orders":args.dataset==="assets"?"/assets":`${isCorp?`/wallets/${division}`:"/wallet"}/${transaction?"transactions":"journal"}`;const url=new URL(ESI+base+suffix);if(paginated)url.searchParams.set("page",String(page));if(cursor!==undefined)url.searchParams.set("from_id",String(cursor));
- const response=await fetchTimed(url.toString(),{signal,headers:{...headers(),Authorization:`Bearer ${stored.accessToken}`}}),data=await jsonResponse(response,options.maxResponseBytes,signal);if(!Array.isArray(data))throw new EveError("EVE returned an unexpected dataset.",502);const pageHeader=response.headers.get("x-pages"),pageCount=pageHeader?Number(pageHeader):null,pages=paginated?(Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null):1,ids=transaction?data.map((row:unknown)=>field(row,'transaction_id')):[];
+ const response=await fetchTimed(url.toString(),{signal,headers:{...headers(),Authorization:`Bearer ${stored.accessToken}`}}),data=await jsonResponse(response,options.maxResponseBytes,signal);if(!Array.isArray(data))throw new EveError("EVE returned an unexpected dataset.",502);const pageHeader=response.headers.get("x-pages"),pageCount=pageHeader&&/^\d+$/.test(pageHeader)?Number(pageHeader):null,pages=paginated?(Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null):1,ids=transaction?data.map((row:unknown)=>field(row,'transaction_id')):[];
  if(!ids.every(positiveId))throw new EveError("EVE returned an unexpected dataset.",502);
  const pageInfo=paginated?pageMetadata(page,pages):null;
  return {entity:args.entity,dataset:args.dataset,characterId:args.characterId,corporationId:isCorp?corporationId:undefined,division:isCorp&&group==="wallet"?division:undefined,data,source:url.toString(),retrievedAt:new Date().toISOString(),cacheExpires:response.headers.get("expires"),cacheControl:response.headers.get("cache-control"),responseDate:response.headers.get("date"),cacheAge:response.headers.get("age"),lastModified:response.headers.get("last-modified"),page:paginated?page:undefined,pages:transaction?undefined:pages,...(pageInfo??{nextPage:null}),nextFromId:transaction?transactionNextFromId(ids,cursor):null,pagination:transaction?transactionPaginationNotice:paginated?"One page returned. Read all remaining pages before computing totals; a missing or invalid page count means completeness is unknown."+pageLimitNotice(pageInfo):"Single list returned.",notes:isCorp&&group==="wallet"?"Only the selected corporation wallet division is included. Access depends on corporation roles.":undefined};
@@ -262,14 +262,16 @@ export async function readEve(user:string,args:ReadArgs,signal?:AbortSignal,opti
 export async function readCharacterData(user:string,args:CharacterReadArgs,signal?:AbortSignal){
  let request:ReturnType<typeof buildCharacterRequest>;
  try{request=buildCharacterRequest(args);}catch(error){if(error instanceof CharacterArgumentError)throw new EveError(error.message);throw error;}
+ // CSPA's read-only cost calculation returns 201; other fixed reads require 200.
+ const expectedStatus=args.dataset==='cspa_cost'?201:200;
  const {dataset}=request,transactionFromId=dataset.pagination==='transactions'?args.parameters?.fromId as number|undefined:undefined;
  // Check the user's stored grant before any refresh or upstream request.
  const {stored}=await activeToken(user,args.characterId,dataset.scope??undefined,signal);
  const response=await fetchTimed(ESI+request.path,{signal,method:request.method,headers:{...headers(),...(dataset.public?{}:{Authorization:`Bearer ${stored.accessToken}`}),...(request.body?{'Content-Type':'application/json'}:{})},body:request.body?JSON.stringify(request.body):undefined});
- const data=await jsonResponse(response,undefined,signal);
+ const data=await jsonResponse(response,undefined,signal,expectedStatus);
  if(dataset.result==='array'?!Array.isArray(data):dataset.result==='number'?typeof data!=='number'||!Number.isFinite(data):!data||typeof data!=='object'||Array.isArray(data))throw new EveError("EVE returned an unexpected dataset.",502);
  if(args.dataset==='freelance_jobs')validateFreelanceJobs(data);
- const pagination=dataset.pagination??'none',pageHeader=response.headers.get('x-pages'),pageCount=pageHeader?Number(pageHeader):null,pages=Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null;
+ const pagination=dataset.pagination??'none',pageHeader=response.headers.get('x-pages'),pageCount=pageHeader&&/^\d+$/.test(pageHeader)?Number(pageHeader):null,pages=Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null;
  const rows:unknown[]|null=Array.isArray(data)?data:null;
  const numericIds=(name:string)=>rows?rows.map(row=>field(row,name)).filter(positiveId):[];
  const transactionIds=pagination==='transactions'?numericIds('transaction_id'):[],mailIds=pagination==='mail'?numericIds('mail_id'):[];
@@ -298,7 +300,9 @@ export async function readPublicNames(ids:unknown,signal?:AbortSignal){
   seen.add(row.id);
   return {id:row.id,name:row.name,category:row.category};
  });
- return {data,retrievedAt:new Date().toISOString(),cacheExpires:response.headers.get('expires')};
+ // Workspace freshness must evaluate Cache-Control/Date/Age together with
+ // Expires, just as it does for authenticated reads. Keep raw metadata internal.
+ return {data,retrievedAt:new Date().toISOString(),cacheExpires:response.headers.get('expires'),cacheControl:response.headers.get('cache-control'),responseDate:response.headers.get('date'),cacheAge:response.headers.get('age')};
 }
 export async function readCorporationData(user:string,args:CorporationReadArgs,signal?:AbortSignal){
  let request:ReturnType<typeof buildCorporationRequest>;
@@ -334,7 +338,7 @@ export async function readCorporationData(user:string,args:CorporationReadArgs,s
   !['details','creator','configuration','progress'].every(key=>isRecord(data[key]))||
   !['id','name','state','last_modified'].every(key=>typeof data[key]==='string')))throw new EveError('EVE returned an unexpected corporation project.',502);
  if(args.dataset==='project_contribution'&&(!isRecord(data)||typeof data.contributed!=='number'||!Number.isSafeInteger(data.contributed)||data.contributed<0))throw new EveError('EVE returned an unexpected project contribution.',502);
- const pageHeader=response.headers.get('x-pages'),pageCount=pageHeader?Number(pageHeader):null,pages=Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null;
+ const pageHeader=response.headers.get('x-pages'),pageCount=pageHeader&&/^\d+$/.test(pageHeader)?Number(pageHeader):null,pages=Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null;
  const pageInfo=paginated?pageMetadata(request.page,pages):null;
  const cursor=cursorPaginated?field(data,'cursor'):undefined;
  if(cursorPaginated&&cursor!==undefined&&!isRecord(cursor))throw new EveError('EVE returned an unexpected corporation cursor.',502);
