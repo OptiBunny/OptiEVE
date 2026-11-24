@@ -49,22 +49,67 @@ function decimal(v: unknown): string {
   if (result.length > 64) return fail();
   return result;
 }
-function headerDate(value: string | null): number | null {
+function headerDate(value: string | null, now: number): number | null {
   if (!value || value.length > 100) return null;
-  const parsed = Date.parse(value); return Number.isFinite(parsed) && new Date(parsed).toISOString().length === 24 ? parsed : null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    const parsed = Date.parse(value), local = Date.parse(value.slice(0, 19) + 'Z');
+    return Number.isFinite(parsed) && new Date(parsed).toISOString().length === 24 && Number.isFinite(local) &&
+      new Date(local).toISOString().slice(0, 19) === value.slice(0, 19) ? parsed : null;
+  }
+  // HTTP also permits RFC850 and asctime dates. Decode their fields explicitly:
+  // Date.parse alone repairs impossible dates and reads asctime in local time.
+  const imf = /^([a-z]{3}), (\d{2}) ([a-z]{3}) (\d{4}) (\d{2}:\d{2}:\d{2}) GMT$/i.exec(value);
+  const rfc850 = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), (\d{2})-([a-z]{3})-(\d{2}) (\d{2}:\d{2}:\d{2}) GMT$/i.exec(value);
+  const asctime = /^([a-z]{3}) ([a-z]{3}) (\d{2}| \d) (\d{2}:\d{2}:\d{2}) (\d{4})$/i.exec(value);
+  const fields = imf ?? rfc850 ?? (asctime && [asctime[0], asctime[1], asctime[3].trim().padStart(2, '0'), asctime[2], asctime[5], asctime[4]]);
+  if (!fields) return null;
+  const [, weekday, day, monthText, yearText, time] = fields;
+  const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(monthText.toLowerCase()) + 1;
+  if (!month) return null;
+  let year = Number(yearText);
+  const utcText = () => `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${day}T${time}Z`;
+  if (rfc850) {
+    const cutoff = new Date(now), currentYear = cutoff.getUTCFullYear();
+    year += currentYear - currentYear % 100;
+    cutoff.setUTCFullYear(currentYear + 50);
+    if (Date.parse(utcText()) > cutoff.getTime()) year -= 100;
+  }
+  if (!Number.isInteger(year) || year < 0 || year > 9999) return null;
+  const expected = utcText(), parsed = Date.parse(expected);
+  if (!Number.isFinite(parsed)) return null;
+  const date = new Date(parsed);
+  return date.toISOString() === expected.slice(0, -1) + '.000Z' &&
+    date.toUTCString().slice(0, 3).toLowerCase() === weekday.slice(0, 3).toLowerCase() ? parsed : null;
+}
+function cacheDirectives(control: string): string[] | null {
+  // Commas inside a quoted extension value do not start new directives.
+  const parts: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < control.length; index++) {
+    const character = control[index];
+    if (escaped) { escaped = false; continue; }
+    if (quoted && character === '\\') { escaped = true; continue; }
+    if (character === '"') quoted = !quoted;
+    else if (character === ',' && !quoted) { parts.push(control.slice(start, index)); start = index + 1; }
+  }
+  if (quoted) return null;
+  parts.push(control.slice(start));
+  return parts;
 }
 function sourceHeaders(url: string, headers: Headers, now: number): ManufacturingPublicSource {
-  const expiry = headerDate(headers.get('expires')), date = headerDate(headers.get('date'));
+  const expiry = headerDate(headers.get('expires'), now), date = headerDate(headers.get('date'), now);
   const control = headers.get('cache-control'), cleanControl = control && control.length <= 256 && !/[\x00-\x1f\x7f]/.test(control) ? control : null;
+  const directives = cacheDirectives(cleanControl ?? '');
   const ageText = headers.get('age'), age = ageText === null ? 0 : /^\d+$/.test(ageText) ? Number(ageText) : NaN;
-  const maxAgeDirective = cleanControl && /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(cleanControl);
+  const maxAgeDirective = directives?.map(directive => /^\s*max-age(?=\s*(?:=|$))([\s\S]*)$/i.exec(directive)).find(Boolean);
   const maxAgeMatch = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]);
   const maxAge = maxAgeMatch ? Number(maxAgeMatch[1]) : null;
   const cacheExpiry = maxAge !== null && integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= now + 60_000 ? Math.min(date + maxAge * 1000, now + (maxAge - age) * 1000) : null;
   let finalExpiry = expiry === null ? cacheExpiry : cacheExpiry === null ? expiry : Math.min(expiry, cacheExpiry);
-  if (cleanControl && /(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(cleanControl)) finalExpiry = now;
-  else if (control !== null && (control.length > 256 || /[\x00-\x1f\x7f]/.test(control)) || maxAgeDirective && cacheExpiry === null) finalExpiry = null;
-  const modified = headerDate(headers.get('last-modified'));
+  if (directives === null) finalExpiry = null;
+  else if (directives.some(directive => /^\s*(?:no-cache|no-store)\s*$/i.test(directive))) finalExpiry = now;
+  else if (control !== null && (control.length > 256 || /[\x00-\x1f\x7f]/.test(control)) || !integer(age, 0, 604800) || maxAgeDirective && cacheExpiry === null) finalExpiry = null;
+  const modified = headerDate(headers.get('last-modified'), now);
   const normalizedExpiry = finalExpiry === null ? null : new Date(finalExpiry).toISOString();
   return { url, retrievedAt: new Date(now).toISOString(), cacheExpires: normalizedExpiry?.length === 24 ? normalizedExpiry : null, lastModified: modified === null ? null : new Date(modified).toISOString(), cacheControl: cleanControl };
 }
@@ -190,7 +235,8 @@ export function createManufacturingMarketReader(dependencies: Dependencies = {})
       earliestAllocatedExpiry = earliestAllocatedExpiry === null ? order.expires : Math.min(earliestAllocatedExpiry, order.expires);
       gross += order.price * BigInt(quantity); remaining -= quantity;
     }
-    const filled = args.quantity - remaining, sourceFreshness = freshness(snapshot.sources, completedAt), completePages = snapshot.complete;
+    const sources = [...location.sources, ...snapshot.sources];
+    const filled = args.quantity - remaining, sourceFreshness = freshness(sources, completedAt), completePages = snapshot.complete;
     const coverage: 'complete' | 'partial' | 'unknown' = completePages && remaining === 0 ? 'complete' : snapshot.pages === null || snapshot.changed ? 'unknown' : 'partial';
     return { regionId: args.regionId, typeId: args.typeId, stationId: args.stationId, solarSystemId: location.system, side: args.side, quantity: args.quantity, filledQuantity: filled, unfilledQuantity: remaining,
       grossISK: money(gross), averageUnitISK: filled ? money((gross + BigInt(Math.floor(filled / 2))) / BigInt(filled)) : null, worstUnitISK: priceLevels.at(-1)?.priceISK ?? null,
@@ -198,7 +244,7 @@ export function createManufacturingMarketReader(dependencies: Dependencies = {})
       // Consumers assembling longer assessments must recheck both this order
       // deadline and source cache expiries at their own completion timestamp.
       validUntil: earliestAllocatedExpiry === null ? null : new Date(earliestAllocatedExpiry).toISOString(),
-      generatedAt: new Date(completedAt).toISOString(), sourceFreshness, sources: [...location.sources, ...snapshot.sources], pagination: { pagesRead: snapshot.pagesRead, totalPages: snapshot.pages, pageLimit: args.maxPages, changedDuringRead: snapshot.changed },
+      generatedAt: new Date(completedAt).toISOString(), sourceFreshness, sources, pagination: { pagesRead: snapshot.pagesRead, totalPages: snapshot.pages, pageLimit: args.maxPages, changedDuringRead: snapshot.changed },
       priceLevels, excludedOwnedOrders, expiredOrders, minimumSkippedOrders, allocationLimitReached,
       limitations: ['Observed gross order-book allocation, not an executed trade or realized profit. Sales tax, broker charges, hauling and manufacturing costs are separate.', 'Exact selected NPC station only; ranged buy orders based at other locations and private structure books are excluded.', 'Owned-order exclusion covers the supplied IDs and the caller’s completeness declaration; no all-account ownership is inferred.', 'Price-priority allocation honors effective minimum fill min(min_volume, volume_remain). Skipping minimum-volume orders is conservative and may omit alternative feasible allocations.', 'Pages are fetched separately and may change; matching page counts do not prove an atomic snapshot.', 'Public ESI prices can be cached and orders can disappear before execution. Average unit ISK is rounded; grossISK is the exact allocated cent sum.'] };
   }

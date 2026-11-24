@@ -235,6 +235,11 @@ export function createManufacturingPlanning(deps: ManufacturingAssessmentDepende
     const completedAt = now(); assessments = prepared.map(item => finalizeManufacturingAssessment(item, completedAt));
     const finalAllocation = allocate(prepared, assessments), jointPrepared = structuredClone(prepared);
     for (let i = 0; i < jointPrepared.length; i++) {
+      // Each job must use the reconciled blueprint evidence and its share of
+      // copy capacity, just as it uses only its allocated material stock.
+      const copy = finalAllocation.copyRuns[i];
+      if (copy.status === 'unavailable') jointPrepared[i].plan.blueprint = { kind: 'unknown', accessConfirmed: false };
+      else if (copy.allocated !== null) jointPrepared[i].plan.blueprint = { kind: 'copy', remainingRuns: copy.allocated, accessConfirmed: true };
       jointPrepared[i].materials = finalAllocation.allocatedMaterials[i].map(row => ({ typeId: row.typeId, ownedQuantity: row.ownedAllocatedQuantity, purchaseAll: null, purchaseMissing: null, sellOwned: null }));
       jointPrepared[i].output = null;
     }

@@ -136,7 +136,7 @@ export async function corporationWorkspaceRequest(args: CorporationWorkspaceRequ
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args),
     });
     if (response.status === 401) {
-      await response.body?.cancel().catch(() => {});
+      void response.body?.cancel().catch(() => {});
       throw new ConnectionResponseError('Sign in to this private connector to load corporation data.', 401);
     }
     let value: unknown;

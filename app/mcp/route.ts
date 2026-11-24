@@ -104,7 +104,7 @@ async function publicEsi(path:string,body?:unknown,page?:number,caller?:AbortSig
  if(!r.ok){cancelPublicBody(r);throw new ToolError(r.status===404?'No matching public EVE record; private structures may require additional access.':`EVE returned HTTP ${r.status}. Retry later if rate limited.`);}
  if(r.status!==200){cancelPublicBody(r);throw new ToolError('EVE returned an unexpected response.');}
  const data=await publicJsonBody(r,page===undefined?PUBLIC_NAMES_RESPONSE_BYTES:PUBLIC_MARKET_RESPONSE_BYTES,signal);signal.throwIfAborted();if(!Array.isArray(data))throw new ToolError('EVE returned an unexpected dataset.');
- const pageHeader=r.headers.get('x-pages'),pageCount=pageHeader?Number(pageHeader):null;
+ const pageHeader=r.headers.get('x-pages'),pageCount=pageHeader&&/^\d+$/.test(pageHeader)?Number(pageHeader):null;
  const paginated=page!==undefined;
  const pages=paginated?(Number.isSafeInteger(pageCount)&&Number(pageCount)>0?pageCount:null):1;
  const morePagesAvailable=page===undefined||pages===null?null:page<pages,pageLimitReached=page===500&&morePagesAvailable!==false;
@@ -189,19 +189,23 @@ async function dispatch(message:unknown,req:Request,inBatch:boolean){
  // Unknown notifications are ignored and never produce a JSON-RPC response.
  if(!hasId)return null;
  const requestId=id as string|number;
- const result=(value:unknown)=>({jsonrpc:'2.0',id:requestId,result:value});
  const invalid=(message='Invalid method parameters')=>failure(requestId,-32602,message);
  if(message.params!==undefined&&!object(message.params))return invalid();
  const params=(message.params??{}) as ObjectValue;
  if(params._meta!==undefined&&!object(params._meta))return invalid();
- if(message.method==='server/discover')return result({supportedVersions:['2026-07-28'],capabilities:{tools:{}},serverInfo:{name:'OptiEVE',version:'1.1.0'}});
+ // Discovery and explicitly modern requests need the modern completion shape.
+ // Zero-TTL private list metadata preserves the existing no-store policy.
+ const modern=message.method==='server/discover'||req.headers.get('MCP-Protocol-Version')==='2026-07-28'||object(params._meta)&&params._meta['io.modelcontextprotocol/protocolVersion']==='2026-07-28';
+ const result=(value:ObjectValue)=>({jsonrpc:'2.0',id:requestId,result:modern?{...value,resultType:'complete'}:value});
+ const cachePolicy=modern?{ttlMs:0,cacheScope:'private'}:{};
+ if(message.method==='server/discover')return result({supportedVersions:['2026-07-28'],capabilities:{tools:{}},serverInfo:{name:'OptiEVE',version:'1.1.0'},...cachePolicy});
  if(message.method==='initialize'){
   if(inBatch)return failure(requestId,-32600,'Initialization must be sent as a single request');
   if(typeof params.protocolVersion!=='string'||!object(params.capabilities)||!object(params.clientInfo)||typeof params.clientInfo.name!=='string'||typeof params.clientInfo.version!=='string')return invalid();
   return result({protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'OptiEVE',version:'1.1.0'},instructions:manufacturingInstructions+' '+walletHistoryInstructions});
  }
  if(message.method==='ping')return result({});
- if(message.method==='tools/list')return params.cursor!==undefined?invalid('Unknown tool-list cursor'):result({tools:toolset});
+ if(message.method==='tools/list')return params.cursor!==undefined?invalid('Unknown tool-list cursor'):result({tools:toolset,...cachePolicy});
  if(message.method!=='tools/call')return failure(requestId,-32601,'Method not found');
  const tool=toolset.find(tool=>tool.name===params.name);
  if(!tool)return invalid('Unknown tool');

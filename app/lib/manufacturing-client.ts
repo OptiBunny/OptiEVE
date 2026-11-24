@@ -10,7 +10,9 @@ const identifier = (value: unknown) => number(value, 1, Number.MAX_SAFE_INTEGER)
 const nullableNumber = (value: unknown) => value === null ? null : number(value);
 const boolean = (value: unknown): boolean => typeof value === 'boolean' ? value : fail();
 const nullableBoolean = (value: unknown) => value === null ? null : boolean(value);
-const money = (value: unknown, signed = false): string | null => value === null ? null : typeof value === 'string' && (signed ? /^-?(0|[1-9]\d{0,18})\.\d{2}$/ : /^(0|[1-9]\d{0,18})\.\d{2}$/).test(value) ? value : fail();
+// Five jobs with twelve materials can exceed input price widths. The estimator's
+// bounded quantities, runs, prices and rates keep totals below 10^37 whole ISK.
+const money = (value: unknown, signed = false): string | null => value === null ? null : typeof value === 'string' && (signed ? /^-?(0|[1-9]\d{0,36})\.\d{2}$/ : /^(0|[1-9]\d{0,36})\.\d{2}$/).test(value) ? value : fail();
 const date = (value: unknown): string => typeof value === 'string' && value.length <= 64 && Number.isFinite(Date.parse(value)) ? value : fail();
 const optionalDate = (value: unknown) => value === null ? null : date(value);
 const array = (value: unknown, maximum: number): unknown[] => Array.isArray(value) && value.length <= maximum ? value : fail();
@@ -89,16 +91,21 @@ export function manufacturingResponse(value: unknown, request: ManufacturingRequ
 
 export async function manufacturingRequest(request: ManufacturingRequest, signal: AbortSignal): Promise<ManufacturingResponse> {
   const controller = new AbortController(), cancel = () => controller.abort();
+  // Cleanup must not delay a known refusal or replace its actionable error.
+  const cancelBody = (response: Response) => { try { void response.body?.cancel().catch(() => {}); } catch {} };
   signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) cancel();
   const timeout = setTimeout(cancel, 65000);
   try {
     const response = await fetch('/api/eve/manufacturing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), cache: 'no-store', signal: controller.signal });
-    if (response.status === 401) { await response.body?.cancel(); throw new ManufacturingResponseError('Sign in to the private app before loading manufacturing data.', 401); }
-    const length = response.headers.get('content-length'); if (length && Number(length) > 2 * 1024 * 1024) { await response.body?.cancel(); throw new ManufacturingResponseError('The manufacturing response exceeded the display limit.'); }
+    if (response.status === 401) { cancelBody(response); throw new ManufacturingResponseError('Sign in to the private app before loading manufacturing data.', 401); }
+    const length = response.headers.get('content-length'); if (length && Number(length) > 2 * 1024 * 1024) { cancelBody(response); throw new ManufacturingResponseError('The manufacturing response exceeded the display limit.'); }
     const reader = response.body?.getReader(); if (!reader) throw new ManufacturingResponseError('Manufacturing returned an unreadable response.');
-    const decoder = new TextDecoder('utf-8', { fatal: true }); let body = '', bytes = 0;
-    try { while (true) { const part = await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > 2 * 1024 * 1024) { await reader.cancel(); throw new ManufacturingResponseError('The manufacturing response exceeded the display limit.'); } body += decoder.decode(part.value, { stream: true }); } body += decoder.decode(); }
-    finally { reader.releaseLock(); }
+    const decoder = new TextDecoder('utf-8', { fatal: true }); let body = '', bytes = 0, done = false;
+    try { while (true) { const part = await reader.read(); if (part.done) { done = true; break; } bytes += part.value.byteLength; if (bytes > 2 * 1024 * 1024) throw new ManufacturingResponseError('The manufacturing response exceeded the display limit.'); body += decoder.decode(part.value, { stream: true }); } body += decoder.decode(); }
+    finally {
+      if (!done) { try { void reader.cancel().catch(() => {}); } catch {} }
+      try { reader.releaseLock(); } catch {}
+    }
     let value: unknown; try { value = JSON.parse(body); } catch { throw new ManufacturingResponseError('Manufacturing returned an unreadable response.'); }
     if (!response.ok) throw new ManufacturingResponseError(record(value) && typeof value.error === 'string' && value.error.length <= 512 ? value.error : 'Manufacturing could not be loaded. Try again.', response.status);
     if (controller.signal.aborted) throw new ManufacturingResponseError('Manufacturing request cancelled.');

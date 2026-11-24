@@ -79,17 +79,34 @@ export function manufacturingExpiryTime(value: unknown): number | null {
   // emitted by our adapters and provider headers, never their normalized form.
   return (iso ? new Date(parsed).toISOString() === `${iso[1]}.${(iso[2] ?? '').padEnd(3, '0')}Z` : new Date(parsed).toUTCString() === value) ? parsed : null;
 }
+function cacheDirectives(control: string): string[] | null {
+  // Commas inside a quoted extension value do not start new directives.
+  const parts: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < control.length; index++) {
+    const character = control[index];
+    if (escaped) { escaped = false; continue; }
+    if (quoted && character === '\\') { escaped = true; continue; }
+    if (character === '"') quoted = !quoted;
+    else if (character === ',' && !quoted) { parts.push(control.slice(start, index)); start = index + 1; }
+  }
+  if (quoted) return null;
+  parts.push(control.slice(start));
+  return parts;
+}
 export function manufacturingPrivateExpiry(value: Record<string, unknown>, received: number): string | null {
   const expires = manufacturingExpiryTime(value.cacheExpires), date = manufacturingExpiryTime(value.responseDate);
   if (value.cacheControl != null && (typeof value.cacheControl !== 'string' || value.cacheControl.length > 256)) return null;
   const control = typeof value.cacheControl === 'string' && value.cacheControl.length <= 256 ? value.cacheControl : '';
+  const directives = cacheDirectives(control);
+  if (directives === null) return null;
   const age = value.cacheAge == null ? 0 : typeof value.cacheAge === 'string' && /^\d+$/.test(value.cacheAge) ? Number(value.cacheAge) : NaN;
-  const maxAgeDirective = /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
+  const maxAgeDirective = directives.map(directive => /^\s*max-age(?=\s*(?:=|$))([\s\S]*)$/i.exec(directive)).find(Boolean);
   const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
   const cached = maxAge !== null && integer(maxAge, 0, 604800) && integer(age, 0, 604800) && date !== null && date <= received + 60000 ? Math.min(date + maxAge * 1000, received + (maxAge - age) * 1000) : null;
   let expiry = expires === null ? cached : cached === null ? expires : Math.min(expires, cached);
-  if (/(?:^|,)\s*(?:no-cache|no-store)(?:\s*(?:,|$))/i.test(control)) expiry = received;
-  else if (maxAgeDirective && cached === null) expiry = null;
+  if (directives.some(directive => /^\s*(?:no-cache|no-store)\s*$/i.test(directive))) expiry = received;
+  else if (!integer(age, 0, 604800) || maxAgeDirective && cached === null) expiry = null;
   const normalized = expiry === null ? null : new Date(expiry).toISOString();
   return normalized?.length === 24 ? normalized : null;
 }

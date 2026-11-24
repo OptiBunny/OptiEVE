@@ -93,7 +93,7 @@ export function projectManufacturingStock(input: ManufacturingStockInput): Manuf
     return fail('An asset ancestry exceeds the supported depth of 16.');
   }
   function group(path: Trace, selectionOnly = false): string | null {
-    let division: number | undefined, personal = false;
+    let division: number | undefined, personal = false, unsupported = false;
     for (const row of path.rows) {
       const match = /^CorpSAG([1-7])$/.exec(row.location_flag);
       if (match) {
@@ -106,9 +106,13 @@ export function projectManufacturingStock(input: ManufacturingStockInput): Manuf
         if (input.resourceEntity !== 'character') { issues.add('An asset ancestry has conflicting hangar ownership or corporation divisions.'); return null; }
         personal = true;
       } else if (row.location_flag !== 'Unlocked' && !(input.resourceEntity === 'corporation' && row.location_flag === 'OfficeFolder')) {
-        issues.add('Selected stock includes a cargo, locked, delivery, safety or other unsupported asset branch.'); return null;
+        unsupported = true;
       }
     }
+    // Exclude material only after the full path proves an unselected division.
+    // Explicitly selected roots still require supported storage flags.
+    if (!selectionOnly && input.resourceEntity === 'corporation' && division !== undefined && !divisions.has(division)) return null;
+    if (unsupported) { issues.add('Selected stock includes a cargo, locked, delivery, safety or other unsupported asset branch.'); return null; }
     if (input.resourceEntity === 'character') {
       if (personal) return 'personal';
     } else {

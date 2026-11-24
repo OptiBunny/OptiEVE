@@ -22,7 +22,7 @@ function bounded(value: Money): Money {
 }
 // Exact arithmetic on received JSON-number decimals, then one cent rounding:
 // ties go away from zero. Reject a result the numeric wire contract cannot retain.
-function numericISK(value: number | Money): number {
+export function numericISK(value: number | Money): number {
   const exact = bounded(typeof value === 'number' ? decimal(value) : value);
   const divisor = 10n ** BigInt(Math.max(0, exact.scale - 2)), magnitude = exact.units < 0n ? -exact.units : exact.units;
   const cents = (exact.scale <= 2 ? magnitude * 10n ** BigInt(2 - exact.scale) : magnitude / divisor + (magnitude % divisor * 2n >= divisor ? 1n : 0n)) * (exact.units < 0n ? -1n : 1n);

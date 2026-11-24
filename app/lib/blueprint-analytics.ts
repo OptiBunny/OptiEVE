@@ -45,14 +45,31 @@ function headerTime(value: unknown): number | null {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && new Date(parsed).toUTCString() === value && new Date(parsed).toISOString().length === 24 ? parsed : null;
 }
+function cacheDirectives(value: string): string[] | null {
+  const parts: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+    } else if (character === '"') quoted = true;
+    else if (character === ',') { parts.push(value.slice(start, index)); start = index + 1; }
+  }
+  if (quoted) return null;
+  parts.push(value.slice(start));
+  return parts;
+}
 function expiry(response: Record<string, unknown>, received: number): string | null {
   const expires = headerTime(response.cacheExpires), date = headerTime(response.responseDate);
   if (response.cacheControl != null && (typeof response.cacheControl !== 'string' || response.cacheControl.length > 512)) return null;
-  const control = typeof response.cacheControl === 'string' && response.cacheControl.length <= 512 ? response.cacheControl : '';
-  if (/(?:^|,)\s*(?:no-cache|no-store)(?=\s*(?:,|$))/i.test(control)) return new Date(received).toISOString();
+  const control = cacheDirectives(typeof response.cacheControl === 'string' ? response.cacheControl : '');
+  if (control === null) return null;
+  if (control.some(part => /^\s*(?:no-cache|no-store)\s*$/i.test(part))) return new Date(received).toISOString();
   const age = response.cacheAge == null ? 0 : typeof response.cacheAge === 'string' && /^\d{1,10}$/.test(response.cacheAge) ? Number(response.cacheAge) : NaN;
   if (!integer(age, 0, 604800)) return null;
-  const maxAgeDirective = /(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/i.exec(control);
+  const maxAgeDirective = control.map(part => /^\s*max-age(?=\s*(?:=|$))(.*)$/is.exec(part)).find(match => match !== null);
   const match = maxAgeDirective && /^=(\d+)\s*$/.exec(maxAgeDirective[1]), maxAge = match ? Number(match[1]) : null;
   const cached = integer(maxAge, 0, 604800) && date !== null && date <= received + 60000 ? Math.min(date + maxAge * 1000, received + (maxAge - age) * 1000) : null;
   // An explicit max-age cannot fall back to Expires when its evidence is unusable.

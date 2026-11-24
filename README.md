@@ -363,6 +363,8 @@ A production build writes `dist/server/wrangler.json`. The start command uses lo
 
 The `install:ci` command supports the managed Linux/Sites environment and requires its shell utilities. Use the portable installation command above for an ordinary checkout. Keep the pinned dependency versions, lockfile and build configuration together when updating the source. Never distribute your installed directory, environment files, authorization database, logs or generated runtime state.
 
+The managed installer selects a writable package store for each invocation and leaves the tracked workspace policy unchanged. Rerun `install:ci` in managed or restricted sessions when dependencies need repair so it can reassess available storage. A later bare pnpm install or store command uses the workspace and environment defaults; it does not remember a previous managed invocation's private fallback or custom runtime store.
+
 ## Set up a separate deployment
 
 Publishing source does not change a **private hosted deployment's** audience. Keep the deployment restricted to its intended owner, and configure a new environment for each separate installation:

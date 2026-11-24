@@ -58,7 +58,7 @@ async function boundedJSON(response: Response, signal: AbortSignal): Promise<unk
   const cancel = () => { void reader.cancel().catch(() => {}); }; signal.addEventListener('abort', cancel, { once: true });
   const decoder = new TextDecoder('utf-8', { fatal: true }); let bytes = 0, text = '', complete = false;
   try { for (;;) { signal.throwIfAborted(); const chunk = await reader.read(); signal.throwIfAborted(); if (chunk.done) break; bytes += chunk.value.byteLength; if (bytes > byteLimit) throw invalid(); text += decoder.decode(chunk.value, { stream: true }); } text += decoder.decode(); complete = true; return JSON.parse(text); }
-  finally { signal.removeEventListener('abort', cancel); if (!complete) await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  finally { signal.removeEventListener('abort', cancel); if (!complete) void reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 export async function marketTransactionsRequest(args: MarketTransactionsArgs, signal?: AbortSignal): Promise<MarketTransactionsAnalytics> {
   const selected = selection(args), controller = new AbortController(), abort = () => controller.abort();

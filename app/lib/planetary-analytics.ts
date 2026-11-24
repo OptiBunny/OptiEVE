@@ -42,14 +42,31 @@ function headerTime(value: unknown): number | null {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && new Date(parsed).toUTCString() === value && new Date(parsed).toISOString().length === 24 ? parsed : null;
 }
+function cacheDirectives(value: string): string[] | null {
+  const parts: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+    } else if (character === '"') quoted = true;
+    else if (character === ',') { parts.push(value.slice(start, index)); start = index + 1; }
+  }
+  if (quoted) return null;
+  parts.push(value.slice(start));
+  return parts;
+}
 function expiry(value: Record<string, unknown>, received: number): string | null {
   const expires = headerTime(value.cacheExpires), date = headerTime(value.responseDate);
   if (value.cacheControl != null && (typeof value.cacheControl !== 'string' || value.cacheControl.length > 512)) return null;
-  const control = typeof value.cacheControl === 'string' ? value.cacheControl : '';
-  if (/(?:^|,)\s*(?:no-cache|no-store)(?=\s*(?:,|$))/i.test(control)) return new Date(received).toISOString();
+  const control = cacheDirectives(typeof value.cacheControl === 'string' ? value.cacheControl : '');
+  if (control === null) return null;
+  if (control.some(part => /^\s*(?:no-cache|no-store)\s*$/i.test(part))) return new Date(received).toISOString();
   const age = value.cacheAge == null ? 0 : typeof value.cacheAge === 'string' && /^\d{1,10}$/.test(value.cacheAge) ? Number(value.cacheAge) : NaN;
   if (!integer(age, 0, 604800)) return null;
-  const directives = [...control.matchAll(/(?:^|,)\s*max-age(?=\s*(?:=|,|$))([^,]*)/gi)];
+  const directives = control.map(part => /^\s*max-age(?=\s*(?:=|$))(.*)$/is.exec(part)).filter(match => match !== null);
   if (directives.length > 1) return null;
   const match = directives[0] && /^=(\d+)\s*$/.exec(directives[0][1]), maxAge = match ? Number(match[1]) : null;
   const cached = integer(maxAge, 0, 604800) && date !== null && date <= received + 60000 ? Math.min(date + maxAge * 1000, received + (maxAge - age) * 1000) : null;

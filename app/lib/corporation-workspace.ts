@@ -1,5 +1,5 @@
 import { EveError, listConnections, readCorporationData, readPublicNames } from './eve';
-import { overviewDate, OverviewDataError, extractionRows, freelanceRows } from './overview-summary';
+import { overviewDate, OverviewDataError, extractionRows, freelanceRows, numericISK } from './overview-summary';
 import { walletActivityExpiry } from './wallet-analytics';
 import type { CorporationWorkspace, CorporationWorkspaceColumn, CorporationWorkspaceRequest, CorporationWorkspaceRow } from './corporation-workspace-types';
 
@@ -29,7 +29,7 @@ const integer = (value: unknown, minimum = 0): value is number => typeof value =
 const uuid = (value: unknown): value is string => typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const cursor = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x20\x7f]/.test(value);
 const invalid = (): never => { throw new OverviewDataError(); };
-const amount = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER / 100 ? Math.round(value * 100) / 100 : invalid();
+const amount = (value: unknown): number => typeof value === 'number' ? numericISK(value) : invalid();
 const count = (value: unknown): number => integer(value) ? value : invalid();
 const date = (value: unknown): string => overviewDate(value) ?? invalid();
 function text(value: unknown, maximum = 256): string {
@@ -82,6 +82,15 @@ type Dependencies = {
   now?: () => number;
 };
 type Table = { columns: CorporationWorkspaceColumn[]; rows: CorporationWorkspaceRow[]; details?: CorporationWorkspace['details']; message: string; coverage: CorporationWorkspace['coverage']; next: CorporationWorkspaceRequest | null };
+
+// Bound the caller's wait even when storage or a provider ignores cancellation.
+async function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted(); let cancel: () => void = () => {};
+  const interrupted = new Promise<never>((_, reject) => { cancel = () => reject(signal.reason); signal.addEventListener('abort', cancel, { once: true }); });
+  void interrupted.catch(() => {});
+  try { const value = await Promise.race([work(), interrupted]); signal.throwIfAborted(); return value; }
+  finally { signal.removeEventListener('abort', cancel); }
+}
 
 function blank(selected: CorporationWorkspaceRequest, now: number, status: CorporationWorkspace['status'], message: string): CorporationWorkspace {
   return { view: selected.view, characterId: selected.characterId, generatedAt: new Date(now).toISOString(), status, message, scope: scopes[selected.view], coverage: 'unavailable', retrievedAt: null, cacheExpires: null, sources: [], columns: [], rows: [], next: null };
@@ -390,7 +399,7 @@ async function addPublicNames(selected: CorporationWorkspaceRequest, rendered: T
     if (!expected.size) return false;
     if (expected.size > 200 || !dependencies.publicNames) return invalid();
     signal.throwIfAborted();
-    const response = await dependencies.publicNames([...expected.keys()], signal);
+    const response = await abortable(() => dependencies.publicNames!([...expected.keys()], signal), signal);
     signal.throwIfAborted();
     if (!record(response) || !overviewDate(response.retrievedAt) || !Array.isArray(response.data) || response.data.length > expected.size) return invalid();
     const names = new Map<number, string>();
@@ -423,7 +432,7 @@ export function createCorporationWorkspaceReader(dependencies: Dependencies) {
     if (!user || typeof user !== 'string') throw new EveError('Sign in to this private connector first.', 401);
     const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(55000)]) : AbortSignal.timeout(55000);
     signal.throwIfAborted();
-    const connection = (await dependencies.connections(user)).find(row => row.characterId === selected.characterId);
+    const connection = (await abortable(() => dependencies.connections(user), signal)).find(row => row.characterId === selected.characterId);
     if (!connection) throw new EveError('Choose a character connected to this private connector.', 404);
     signal.throwIfAborted();
     if (!connection.scopes.includes(scopes[selected.view])) return blank(selected, now(), 'needs_permission', 'This character has not granted the required read permission. Select that optional permission and authorize again; existing grants are not changed automatically.');
@@ -432,7 +441,7 @@ export function createCorporationWorkspaceReader(dependencies: Dependencies) {
     try {
       const fetchOne = async (request: ReadArgs) => {
         signal.throwIfAborted();
-        const result = await dependencies.corporation(user, request, signal);
+        const result = await abortable(() => dependencies.corporation(user, request, signal), signal);
         signal.throwIfAborted();
         if (!record(result) || result.entity !== 'corporation' || result.characterId !== selected.characterId || result.dataset !== request.dataset || !integer(result.corporationId, 1) || !overviewDate(result.retrievedAt)) return invalid();
         if (corporationId !== undefined && corporationId !== result.corporationId) throw new EveError('Corporation changed.', 409);
