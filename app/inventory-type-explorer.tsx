@@ -16,9 +16,9 @@ export default function InventoryTypeExplorer({ result, sort, onSort }: { result
   const isCurrent = () => mounted.current && current.current.result === result && current.current.filters === filters;
   function change(next: Filters) { if (!isCurrent()) return; current.current = { result, filters: next }; setFilters(next); }
   const groups = result.groups.filter(group => filters.category === 'all' || key(group.categoryId) === filters.category);
-  const needle = filters.query.trim().toLocaleLowerCase();
+  const needle = filters.query.trim().toLowerCase();
   const subset = result.types.filter(type => (filters.category === 'all' || key(type.categoryId) === filters.category) && (filters.group === 'all' || key(type.groupId) === filters.group)
-    && `${type.name} ${type.typeId} ${type.groupName} ${type.categoryName}`.toLocaleLowerCase().includes(needle));
+    && `${type.name} ${type.typeId} ${type.groupName} ${type.categoryName}`.toLowerCase().includes(needle));
   const matching = subset.filter(type => filters.type === 'all' || String(type.typeId) === filters.type).sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) || a.typeId - b.typeId : b.records - a.records || a.name.localeCompare(b.name) || a.typeId - b.typeId);
   const top = [...subset].sort((a, b) => b.records - a.records || a.typeId - b.typeId).slice(0, 12), maximum = top[0]?.records ?? 0;
   const shown = matching.slice(filters.offset, filters.offset + 100), subsetRecords = subset.reduce((sum, type) => sum + type.records, 0), matchingRecords = matching.reduce((sum, type) => sum + type.records, 0);

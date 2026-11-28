@@ -91,6 +91,12 @@ export function extractionRows(data: unknown) {
     return { structure: row.structure_id as number, moon: row.moon_id, start: new Date(start).toISOString(), arrival: new Date(arrival).toISOString(), decay: new Date(decay).toISOString() };
   });
 }
+export function boundedOverviewText(value: string, maximum = 256): string {
+  const clean = value.normalize('NFC').replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ').trim();
+  // A supplementary character starting in the last slot needs two UTF-16 units.
+  const lastPoint = clean.codePointAt(maximum - 1);
+  return clean.slice(0, lastPoint !== undefined && lastPoint > 0xffff ? maximum - 1 : maximum);
+}
 export function freelanceRows(data: unknown, maximum = 10000) {
   if (!record(data)) return invalid();
   const all = rows(data.freelance_jobs, 'id');
@@ -100,7 +106,7 @@ export function freelanceRows(data: unknown, maximum = 10000) {
     const lastModified = date(row.last_modified);
     if (row.reward !== undefined && (!record(row.reward) || !money(row.reward.initial) || !money(row.reward.remaining))) return invalid();
     const reward = row.reward as { initial: number; remaining: number } | undefined;
-    const name = row.name.normalize('NFC').replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ').trim().slice(0, 256);
+    const name = boundedOverviewText(row.name);
     if (!name) return invalid();
     return { id: (row.id as string).toLowerCase(), name, state: row.state, current: row.progress.current, desired: row.progress.desired, lastModified: new Date(lastModified).toISOString(), ...(reward ? { initialReward: numericISK(reward.initial), remainingReward: numericISK(reward.remaining) } : {}) };
   });

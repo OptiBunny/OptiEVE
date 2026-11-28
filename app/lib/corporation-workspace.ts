@@ -1,5 +1,5 @@
 import { EveError, listConnections, readCorporationData, readPublicNames } from './eve';
-import { overviewDate, OverviewDataError, extractionRows, freelanceRows, numericISK } from './overview-summary';
+import { boundedOverviewText, overviewDate, OverviewDataError, extractionRows, freelanceRows, numericISK } from './overview-summary';
 import { walletActivityExpiry } from './wallet-analytics';
 import type { CorporationWorkspace, CorporationWorkspaceColumn, CorporationWorkspaceRequest, CorporationWorkspaceRow } from './corporation-workspace-types';
 
@@ -36,7 +36,7 @@ function text(value: unknown, maximum = 256): string {
   if (typeof value !== 'string' || value.length > 16384) return invalid();
   // User-authored titles are plain text. No HTML, links, markdown or instructions
   // are interpreted by this service or its table renderer.
-  return value.normalize('NFC').replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ').trim().slice(0, maximum);
+  return boundedOverviewText(value, maximum);
 }
 function rows(value: unknown, key: string, maximum = 10000): Record<string, unknown>[] {
   if (!Array.isArray(value) || value.length > maximum) return invalid();
