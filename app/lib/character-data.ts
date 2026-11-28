@@ -101,7 +101,12 @@ function validate(key:string,value:unknown,kind:ParameterKind):string|number|boo
     case 'search':if(typeof value==='string'&&value.trim().length>=3&&value.length<=200&&!/[\x00-\x1f\x7f]/.test(value))return value;break;
     case 'ids':case 'labels':{
       const max=kind==='labels'?25:key==='recipientIds'?100:1000;
-      if(Array.isArray(value)&&value.length>=1&&value.length<=max&&value.every(positiveId)&&new Set(value).size===value.length)return value as number[];break;
+      if (!Array.isArray(value)) break;
+      const length = value.length;
+      if (!Number.isSafeInteger(length) || length < 1 || length > max) break;
+      const ids = Array.from({ length }, (_, index) => value[index] as number);
+      if (ids.every(positiveId) && new Set(ids).size === ids.length) return ids;
+      break;
     }
     case 'categories':if(Array.isArray(value)&&value.length>=1&&value.length<=11&&value.every(v=>typeof v==='string'&&searchCategories.includes(v))&&new Set(value).size===value.length)return value as string[];break;
   }

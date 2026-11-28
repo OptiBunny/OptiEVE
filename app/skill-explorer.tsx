@@ -13,11 +13,11 @@ function SkillBars({ title, unit, rows, maximum, choose }: { title: string; unit
 export default function SkillExplorer({ skills }: { skills: CharacterSkillsAnalytics }) {
   const id = useId(), [query, setQuery] = useState(''), [group, setGroup] = useState('all'), [trained, setTrained] = useState('all'), [active, setActive] = useState('all'), [relation, setRelation] = useState('all'), [offset, setOffset] = useState(0);
   const groups = [...skills.groups].sort((a, b) => b.skillpoints - a.skillpoints || (a.groupId ?? -1) - (b.groupId ?? -1));
-  const needle = query.trim().toLocaleLowerCase();
+  const needle = query.trim().toLowerCase();
   const matching = skills.skills.filter(row => (group === 'all' || groupKey(row.groupId) === group)
     && (trained === 'all' || row.trainedLevel === Number(trained)) && (active === 'all' || row.activeLevel === Number(active))
     && (relation === 'all' || relation === 'reduced' && row.activeLevel < row.trainedLevel || relation === 'equal' && row.activeLevel === row.trainedLevel || relation === 'boosted' && row.activeLevel > row.trainedLevel)
-    && `${row.name} ${row.groupName} ${row.typeId}`.toLocaleLowerCase().includes(needle));
+    && `${row.name} ${row.groupName} ${row.typeId}`.toLowerCase().includes(needle));
   const shown = matching.slice(offset, offset + 100), levelMaximum = Math.max(1, ...skills.levelDistribution.flatMap(row => [row.trainedCount, row.activeCount]));
   function reset() { setQuery(''); setGroup('all'); setTrained('all'); setActive('all'); setRelation('all'); setOffset(0); }
   function drill(kind: 'group' | 'trained' | 'active', value: string) { reset(); if (kind === 'group') setGroup(value); else if (kind === 'trained') setTrained(value); else setActive(value); }

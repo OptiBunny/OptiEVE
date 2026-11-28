@@ -43,7 +43,7 @@ export default function TrainingQueue({ queue }: { queue: CharacterQueueAnalytic
     const bucket = bucketFor(row, asOf);
     if (filter === 'next30d' ? !['next24h', 'days2to7', 'days8to30'].includes(bucket) : filter !== 'all' && filter !== bucket) return false;
     if (date && (row.finishAt === null || new Date(row.finishAt).toISOString().slice(0, 10) !== date)) return false;
-    return (row.name + ' ' + row.typeId).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+    return (row.name + ' ' + row.typeId).toLowerCase().includes(query.trim().toLowerCase());
   });
   const currentPage = Math.min(page, Math.max(0, Math.ceil(matching.length / 100) - 1)), offset = currentPage * 100, shown = matching.slice(offset, offset + 100);
   const selectDay = (next: string) => { setDate(next); setFilter('next30d'); setQuery(''); setPage(0); };
