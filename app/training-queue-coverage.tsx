@@ -12,7 +12,13 @@ export function trainingCoverage(entries: CharacterQueueEntry[], start: number, 
     if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) { unclassified++; continue; }
     if (from === to) { zeroLength++; continue; }
     const left = Math.max(start, from), right = Math.min(end, to);
-    if (left >= right) { outside++; continue; }
+    if (left >= right) {
+      outside++;
+      // An interval beyond this edge can still bound a gap inside the window.
+      const edge = to <= start ? start : end;
+      if (!changes.has(edge)) changes.set(edge, 0);
+      continue;
+    }
     included++;
     changes.set(left, (changes.get(left) ?? 0) + 1);
     changes.set(right, (changes.get(right) ?? 0) - 1);
@@ -56,7 +62,7 @@ export default function TrainingCoverage({ entries, asOf }: { entries: Character
   return <details className="overview-card"><summary>Training queue gaps and overlaps · next 30 days</summary>
     <p>Reported intervals from {utc(start)} to {utc(end)}. A gap is time between two reported intervals. Entries without usable dates can leave the schedule uncertain.</p>
     <p>{result.included} entries intersect this window · {result.outside} outside · {result.zeroLength} with zero duration · {result.unclassified} with missing or invalid dates.</p>
-    {result.included === 0 ? <p>No usable interval intersects this window.</p> : <>
+    {result.included === 0 && result.gaps.length === 0 ? <p>No usable interval intersects this window.</p> : <>
       <dl className="overview-metrics">
         <div><dt>Time covered by reported entries</dt><dd>{duration(result.coveredMs)}</dd></div>
         <div><dt>Time in internal gaps</dt><dd>{duration(result.gapMs)}</dd></div>
