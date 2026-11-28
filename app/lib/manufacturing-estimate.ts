@@ -152,6 +152,39 @@ const sum = (...values: MaybeMoney[]): MaybeMoney => values.some(value => value 
 const subtract = (a: MaybeMoney, b: MaybeMoney): MaybeMoney => a === null || b === null ? null : a - b;
 const tax = (cents: MaybeMoney, taxRate: bigint | null): MaybeMoney => cents === null || taxRate === null ? null : ceil(cents * taxRate, SCALE);
 
+/** Divide an accepted job total, preserving sub-cent and recurring costs exactly. */
+export function manufacturingUnitCost(totalISK: string | null, outputs: number): string | null {
+  if (totalISK === null || !/^(0|[1-9]\d{0,36})\.\d{2}$/.test(totalISK) || !Number.isSafeInteger(outputs) || outputs <= 0) return null;
+  const cents = BigInt(totalISK.replace('.', ''));
+  const denominator = BigInt(outputs) * 100n;
+  const whole = cents / denominator;
+  let remainder = cents % denominator;
+  let decimals = '';
+  while (remainder && decimals.length < 6) {
+    remainder *= 10n;
+    decimals += String(remainder / denominator);
+    remainder %= denominator;
+  }
+  if (!remainder) return decimals ? whole + '.' + decimals : String(whole);
+  // A reduced fraction is more legible than a long decimal and never rounds a threshold down.
+  let divisor = denominator, next = cents % denominator;
+  while (next) [divisor, next] = [next, divisor % next];
+  return String(cents / divisor) + '/' + String(denominator / divisor);
+}
+
+type ShoppingLine = { typeId: number; missingQuantity: number | null; purchaseISK: string | null; coverage: string };
+
+export function manufacturingShortfalls<T extends ShoppingLine>(lines: readonly T[]) {
+  const quoted: { line: T; cents: bigint }[] = [], unranked: T[] = [], covered: T[] = [];
+  for (const line of lines) {
+    if (line.missingQuantity === 0) covered.push(line);
+    else if (line.missingQuantity === null || line.coverage !== 'complete' || line.purchaseISK === null) unranked.push(line);
+    else quoted.push({ line, cents: BigInt(line.purchaseISK.replace('.', '')) });
+  }
+  quoted.sort((a, b) => a.cents === b.cents ? a.line.typeId - b.line.typeId : a.cents > b.cents ? -1 : 1);
+  return { quoted: quoted.map(entry => entry.line), unranked, covered };
+}
+
 export function validateManufacturingPlan(value: unknown): ManufacturingPlan {
   const p = record(value, ['runs', 'materialEfficiency', 'facilityMaterialMultiplier', 'blueprint', 'facilityAccessConfirmed', 'sale', 'job', 'overhead'], 'manufacturing plan');
   integer(p.runs, 1, 1_000_000, 'runs'); integer(p.materialEfficiency, 0, 10, 'material efficiency');
@@ -379,6 +412,8 @@ export function estimateManufacturing(recipe: ManufacturingRecipe, input: Manufa
       installation: { mode: installationMode, estimatedItemValueISK: money(estimatedItemValue), totalISK: money(installation), breakdown: jobBreakdown },
       haulingISK: money(hauling), blueprintCashISK: money(blueprintCash), blueprintOpportunityISK: money(blueprintOpportunity), otherCashISK: money(otherCash), otherOpportunityISK: money(otherOpportunity),
       cashRequiredISK: money(cashRequired), economicCostISK: money(economicCost), buyAllEconomicCostISK: money(buyAllEconomicCost),
+      netBreakEvenISKPerOutput: manufacturingUnitCost(money(economicCost), requirements.product.quantity),
+      additionalCashISKPerOutput: manufacturingUnitCost(money(cashRequired), requirements.product.quantity),
     },
     instantSale: { kind: 'current_buy_order_depth' as const, grossRevenueISK: money(instantGross), salesTaxISK: money(instantTax), netRevenueISK: money(instantNet), economicProfitISK: money(instantProfit), buyAllProfitISK: money(instantBuyAllProfit), complete: instantProfit !== null },
     listedSale: listed,

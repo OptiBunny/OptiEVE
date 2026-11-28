@@ -13,6 +13,7 @@ import WalletAnalyticsPanel from './wallet-analytics-panel';
 import WalletHistoryPanel from './wallet-history-panel';
 import InventoryAnalyticsPanel from './inventory-analytics-panel';
 import IndustryAnalyticsPanel from './industry-analytics-panel';
+import HistoricalOrdersPanel from './historical-orders-panel';
 import OrderAnalyticsPanel from './order-analytics-panel';
 import MarketTransactionsPanel from './market-transactions-panel';
 import ContractsAnalyticsPanel from './contracts-analytics-panel';
@@ -95,6 +96,7 @@ export default function ConnectionPanel(){
   {tab==='notifications'&&status&&!statusLoading&&handoffIsCurrent&&<NotificationsAnalyticsPanel key={'notifications-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='mail'&&status&&!statusLoading&&handoffIsCurrent&&<MailAnalyticsPanel key={'mail-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='fittings'&&status&&!statusLoading&&handoffIsCurrent&&<SavedFittingsPanel key={'fittings-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
+  {tab==='historicalOrders'&&status&&!statusLoading&&<HistoricalOrdersPanel key={'historicalOrders-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='orders'&&status&&!statusLoading&&handoffIsCurrent&&<OrderAnalyticsPanel key={'orders-'+JSON.stringify(status.characters)+(seed?':'+seed.generation:'')} initialCharacterId={seed?.shortcut.characterId} characters={status.characters} openConnections={()=>selectTab('connections')}/>}
   {tab==='marketHistory'&&status&&!statusLoading&&<MarketHistoryPanel key={'market-history-'+JSON.stringify(status.characters)} openConnections={()=>selectTab('connections')}/>}
   {tab==='market'&&status&&!statusLoading&&<MarketTransactionsPanel key={'market-'+JSON.stringify(status.characters)} characters={status.characters} openConnections={()=>selectTab('connections')}/>}

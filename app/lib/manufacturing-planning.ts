@@ -6,7 +6,7 @@ import {
   type ManufacturingAssessmentInput, type ManufacturingAssessmentDependencies, type ManufacturingPreparedAssessment,
   type ManufacturingAssessment,
 } from './manufacturing-assessment';
-import type { ManufacturingDepthQuote } from './manufacturing-estimate';
+import { manufacturingShortfalls, type ManufacturingDepthQuote } from './manufacturing-estimate';
 
 type JobFields = 'blueprintTypeId' | 'blueprintSource' | 'blueprintItemId' | 'blueprintPage' | 'plan';
 export type ManufacturingPlanningJob = Pick<ManufacturingAssessmentInput, JobFields> & { key: string };
@@ -279,6 +279,7 @@ export function createManufacturingPlanning(deps: ManufacturingAssessmentDepende
     if (outputRows.some(row => row.coverage !== 'complete')) issues.push('Combined output depth is incomplete; full-plan sales and margins are unknown.');
     request.check();
     return { kind: 'manufacturing_production_plan' as const, generatedAt: new Date(completedAt).toISOString(), jobs, shoppingList, outputs: outputRows,
+      quotedShortfallTypeIdsByCost: manufacturingShortfalls(shoppingList).quoted.map(line => line.typeId),
       totals: { walletISK: money(wallet), materialCashISK: money(materialCash), jobAndOverheadCashISK: money(overheadCash), cashRequiredISK: money(cash), affordable, netRevenueISK: money(net), economicProfitISK: money(subtract(net, economic)) },
       readiness: blocked ? 'blocked' as const : unknown ? 'unconfirmed' as const : 'conditional' as const,
       conditions: [...new Set([...issues, ...assessments.flatMap(item => item.conditions)])],
@@ -295,6 +296,7 @@ export type ManufacturingProductionPlan = {
   kind: 'manufacturing_production_plan'; generatedAt: string;
   jobs: { key: string; assessment: ManufacturingAssessment; allocatedMaterials: ManufacturingAllocatedMaterial[]; copyRunsAllocated: number | null; copyRuns: CopyAllocation }[];
   shoppingList: (ManufacturingAllocatedMaterial & { purchaseISK: string | null; coverage: Coverage })[];
+  quotedShortfallTypeIdsByCost: number[];
   outputs: { typeId: number; name: string; quantity: number; grossRevenueISK: string | null; coverage: Coverage }[];
   totals: { walletISK: string | null; materialCashISK: string | null; jobAndOverheadCashISK: string | null; cashRequiredISK: string | null; affordable: boolean | null; netRevenueISK: string | null; economicProfitISK: string | null };
   readiness: 'blocked' | 'unconfirmed' | 'conditional'; conditions: string[]; limitations: string[];

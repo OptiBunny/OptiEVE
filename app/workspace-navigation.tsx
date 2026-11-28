@@ -3,7 +3,7 @@ import { useId } from 'react';
 
 const groups = [
   { label: 'Character', items: [{ key: 'overview', label: 'Overview' }, { key: 'training', label: 'Skills & training' }, { key: 'clones', label: 'Clones & implants' }, { key: 'calendar', label: 'Calendar' }, { key: 'freelance', label: 'Freelance' }, { key: 'fittings', label: 'Saved fittings' }, { key: 'mail', label: 'Mail headers' }, { key: 'contacts', label: 'Contacts' }, { key: 'notifications', label: 'Notifications' }, { key: 'reputation', label: 'Reputation' }] },
-  { label: 'Finance', items: [{ key: 'wallet', label: 'Wallet activity' }, { key: 'orders', label: 'Open orders' }, { key: 'market', label: 'Trade activity' }, { key: 'marketHistory', label: 'Regional market history' }, { key: 'contracts', label: 'Contracts' }] },
+  { label: 'Finance', items: [{ key: 'wallet', label: 'Wallet activity' }, { key: 'orders', label: 'Open orders' }, { key: 'historicalOrders', label: 'Historical orders' }, { key: 'market', label: 'Trade activity' }, { key: 'marketHistory', label: 'Regional market history' }, { key: 'contracts', label: 'Contracts' }] },
   { label: 'Operations', items: [{ key: 'corporation', label: 'Corporation' }, { key: 'inventory', label: 'Inventory' }, { key: 'jobs', label: 'Industry jobs' }, { key: 'industry', label: 'Industry' }, { key: 'manufacturing', label: 'Manufacturing' }, { key: 'blueprints', label: 'Blueprint analytics' }] },
   { label: 'Setup', items: [{ key: 'connections', label: 'Connections' }] },
 ] as const;
