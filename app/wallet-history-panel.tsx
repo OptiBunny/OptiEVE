@@ -5,6 +5,7 @@ import { formatISK } from './lib/analytics-client';
 import { fetchWalletHistory } from './lib/wallet-history-client';
 import type { WalletHistoryArgs, WalletHistoryDays, WalletHistoryReportDays, WalletHistoryView } from './lib/wallet-history-types';
 import { CashFlowBars } from './analytics-charts';
+import WalletActivityCalendar from './wallet-activity-calendar';
 
 const time = (value: string | null) => value ? new Date(value).toISOString().replace('T', ' ').replace('.000Z', ' UTC') : 'Not recorded';
 const scope = 'esi-wallet.read_character_wallet.v1';
@@ -14,10 +15,13 @@ const retentionChoices: WalletHistoryDays[] = [30, 90, 365];
 export function WalletHistoryResults({ result }: { result: WalletHistoryView }) {
   if (!result.observationsAvailable) return <div className="analytics-section"><h3>Saved wallet observations unavailable</h3><p className="overview-state">The current connection has no saved wallet read permission. Saved entry counts, amounts, dates and capture details are hidden; this is not evidence of an empty saved period. History settings and permitted pause or erase controls remain available above.</p></div>;
   const { report, lastCapture, comparison } = result;
+  const retainedDays = Math.min(report.days, result.settings.retentionDays);
+  const calendarStart = new Date(Date.parse(result.generatedAt) - retainedDays * 86400000).toISOString();
   return <div className="analytics-section">
     <div className="overview-coverage"><strong>Saved character wallet observations</strong><span>Last {report.days} days · retention {result.settings.retentionDays} days</span><span>{report.entries} saved entries · {report.missingAmountEntries} without amounts</span></div>
     <p className="overview-hint">These charts include only saved observations still inside retention. Captures may have gaps or stop before all pages. A day without saved entries is omitted, never assumed to have zero activity. Cash flow includes transfers and is not profit or wallet balance.</p>
     {report.totals ? <article className="overview-card analytics-section"><h3>Saved cash flow</h3><dl className="overview-metrics"><div><dt>Net cash flow (ISK)</dt><dd>{formatISK(report.totals.netISK)}</dd></div><div><dt>Incoming ISK</dt><dd>{formatISK(report.totals.incomingISK)}</dd></div><div><dt>Outgoing ISK</dt><dd>{formatISK(report.totals.outgoingISK)}</dd></div></dl></article> : <p className="overview-state">{report.entries ? 'Saved entries contain no reported amounts. Cash-flow totals are unknown.' : 'No saved observations in this period. Cash-flow totals are unknown.'}</p>}
+    <WalletActivityCalendar key={result.characterId + ':' + result.generatedAt + ':' + report.days} daily={report.daily} start={calendarStart} end={result.generatedAt} source="saved report"/>
     {comparison && <article className="overview-card analytics-section"><h3>Compare saved periods</h3>
       <p className="overview-hint">The two windows use the same saved history. These are observed amounts, not complete calendar totals or a growth rate. Missing days remain unknown. Future-dated entries are excluded until their timestamp is reached.</p>
       <div className="overview-cards"><div><h4>Previous {report.days} days</h4><p>From {time(comparison.previous.startsAt)} (inclusive)<br/>Before {time(comparison.previous.endsBefore)} (exclusive)</p><p>First saved entry: {time(comparison.previous.earliest)}<br/>Last saved entry: {time(comparison.previous.latest)}</p></div><div><h4>Current {report.days} days</h4><p>From {time(comparison.current.startsAt)} (inclusive)<br/>Through {time(comparison.current.endsAt)} (inclusive)</p><p>First saved entry: {time(report.earliest)}<br/>Last saved entry: {time(report.latest)}</p></div></div>

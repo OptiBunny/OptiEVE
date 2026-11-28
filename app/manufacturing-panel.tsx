@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Character } from './lib/connection-client';
 import { manufacturingRequest } from './lib/manufacturing-client';
 import { demoCharacters, demoContext, demoPlan, manufacturingDemoRequest } from './lib/manufacturing-demo';
-import { validateManufacturingPlan } from './lib/manufacturing-estimate';
+import { manufacturingShortfalls, manufacturingUnitCost, validateManufacturingPlan } from './lib/manufacturing-estimate';
 import type { ManufacturingPlan } from './lib/manufacturing-estimate';
-import type { DemoScenario, ManufacturingBlueprintResponse, ManufacturingCard, ManufacturingCatalogResponse, ManufacturingContext, ManufacturingJob, ManufacturingRequest, ManufacturingResponse, ManufacturingSearchResponse } from './lib/manufacturing-types';
+import type { DemoScenario, ManufacturingBlueprintResponse, ManufacturingCard, ManufacturingCatalogResponse, ManufacturingContext, ManufacturingJob, ManufacturingProductionResponse, ManufacturingRequest, ManufacturingResponse, ManufacturingSearchResponse } from './lib/manufacturing-types';
 import './manufacturing.css';
 
 type Mode = 'assess' | 'compare' | 'plan';
@@ -55,13 +55,46 @@ function Status({ value }: { value: string }) { return <span className={`manufac
 function Materials({ card }: { card: ManufacturingCard }) {
   return <div className="manufacturing-table-wrap"><table><caption>Materials for {card.productName}</caption><thead><tr><th>Material</th><th>Required</th><th>Allocated stock</th><th>Buy</th><th>Purchase cost</th></tr></thead><tbody>{card.materials.map(material => <tr key={material.typeId}><th scope="row">{material.name}</th><td>{quantity(material.requiredQuantity)}</td><td>{quantity(material.usedQuantity)}</td><td>{quantity(material.missingQuantity)}</td><td>{money(material.buyISK)}</td></tr>)}</tbody></table></div>;
 }
+function ShoppingList({ lines }: { lines: ManufacturingProductionResponse['shoppingList'] }) {
+  const { quoted, unranked, covered } = manufacturingShortfalls(lines);
+  const groups = [
+    { label: 'Quoted shortfalls, highest total purchase cost first', rows: quoted },
+    { label: 'Unranked shortfalls or incomplete stock evidence', rows: unranked },
+    { label: 'No purchase needed', rows: covered },
+  ];
+  return <div className="manufacturing-table-wrap"><table>
+    <caption>Combined shopping list — stock allocated once</caption>
+    <thead><tr><th>Material</th><th>Required</th><th>Stock allocated</th><th>Buy</th><th>Total purchase cost</th><th>Coverage</th></tr></thead>
+    {groups.filter(group => group.rows.length).map(group => <tbody key={group.label}>
+      <tr><th scope="rowgroup" colSpan={6}>{group.label}</th></tr>
+      {group.rows.map(line => <tr key={line.typeId}><th scope="row">{line.name}</th>
+        <td>{quantity(line.requiredQuantity)}</td><td>{quantity(line.ownedAllocatedQuantity)}</td>
+        <td>{quantity(line.missingQuantity)}</td><td>{money(line.purchaseISK)}</td><td>{line.coverage}</td></tr>)}
+    </tbody>)}
+  </table></div>;
+}
+
+function UnitCosts({ card }: { card: ManufacturingCard }) {
+  const perOutput = (total: string | null) => {
+    const value = manufacturingUnitCost(total, card.outputQuantity);
+    return value === null ? 'Unknown' : value + ' ISK';
+  };
+  return <>
+    <Metrics values={[
+      ['Break-even net proceeds per output', perOutput(card.economicCostISK)],
+      ['Additional cash per output', perOutput(card.cashRequiredISK)],
+    ]} />
+    <p className="manufacturing-note">Each value uses the modeled batch of {quantity(card.outputQuantity)} outputs. To break even, sales must return the economic cost after taxes and fees. Fractions show the exact per-unit amount.</p>
+  </>;
+}
+
 function Card({ card, rank }: { card: ManufacturingCard; rank?: number }) {
-  return <article className="manufacturing-result-card"><header><div><span className="eyebrow">{rank ? `Alternative ${rank}` : `${quantity(card.runs)} runs · ${quantity(card.outputQuantity)} outputs`}</span><h3>{card.productName}</h3></div><Status value={card.readiness} /></header><Metrics values={[["Additional cash", money(card.cashRequiredISK)], ['Instant-sale economic profit', money(card.profitISK)], ['Available wallet', money(card.availableWalletISK)], ['Economic cost', money(card.economicCostISK)]]} /><p className="manufacturing-note">{card.affordable === null ? 'Affordability is unknown.' : card.affordable ? 'Wallet covers this modeled cash requirement.' : 'Wallet does not cover this modeled cash requirement.'} Owned materials retain their sale value; they are not free inputs.</p>{card.listedProfitISK !== null && <p className="manufacturing-note">Hypothetical listed-sale profit: {money(card.listedProfitISK)}. Asking prices do not establish demand or a future sale.</p>}<Materials card={card} /><details><summary>Evidence, missing inputs and limits ({card.reasons.length})</summary><p>Recipe: {card.recipeCurrent ? 'current' : 'not verified current'} · Stock coverage: {card.stockCoverage} · Owned-order exclusions: {card.ownOrdersComplete ? 'complete' : 'incomplete'}</p><ul>{card.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul><ul>{card.freshness.map((source, index) => <li key={index}>{source.label}: {source.status}{source.cacheExpires ? ` · expires ${new Date(source.cacheExpires).toLocaleString()}` : ''}</li>)}</ul></details></article>;
+  return <article className="manufacturing-result-card"><header><div><span className="eyebrow">{rank ? `Alternative ${rank}` : `${quantity(card.runs)} runs · ${quantity(card.outputQuantity)} outputs`}</span><h3>{card.productName}</h3></div><Status value={card.readiness} /></header><Metrics values={[["Additional cash", money(card.cashRequiredISK)], ['Instant-sale economic profit', money(card.profitISK)], ['Available wallet', money(card.availableWalletISK)], ['Economic cost', money(card.economicCostISK)]]} /><UnitCosts card={card} /><p className="manufacturing-note">{card.affordable === null ? 'Affordability is unknown.' : card.affordable ? 'Wallet covers this modeled cash requirement.' : 'Wallet does not cover this modeled cash requirement.'} Owned materials retain their sale value; they are not free inputs.</p>{card.listedProfitISK !== null && <p className="manufacturing-note">Hypothetical listed-sale profit: {money(card.listedProfitISK)}. Asking prices do not establish demand or a future sale.</p>}<Materials card={card} /><details><summary>Evidence, missing inputs and limits ({card.reasons.length})</summary><p>Recipe: {card.recipeCurrent ? 'current' : 'not verified current'} · Stock coverage: {card.stockCoverage} · Owned-order exclusions: {card.ownOrdersComplete ? 'complete' : 'incomplete'}</p><ul>{card.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul><ul>{card.freshness.map((source, index) => <li key={index}>{source.label}: {source.status}{source.cacheExpires ? ` · expires ${new Date(source.cacheExpires).toLocaleString()}` : ''}</li>)}</ul></details></article>;
 }
 function Results({ result }: { result: Result }) {
   if (result.operation === 'assess') return <Card card={result.assessment} />;
   if (result.operation === 'compare') return <><div className="manufacturing-notice"><h3>Independent alternatives</h3><ul>{result.conditions.map((condition, index) => <li key={index}>{condition}</li>)}</ul>{!result.rankedKeys.length && <p>No candidate has enough evidence for a conditional profit ranking.</p>}</div>{[...result.candidates].sort((a, b) => { const ai = result.rankedKeys.indexOf(a.key), bi = result.rankedKeys.indexOf(b.key); return (ai < 0 ? 6 : ai) - (bi < 0 ? 6 : bi); }).map(card => <Card key={card.key} card={card} rank={result.rankedKeys.includes(card.key) ? result.rankedKeys.indexOf(card.key) + 1 : undefined} />)}</>;
-  return <><article className="manufacturing-result-card"><header><h3>Shared production plan</h3><Status value={result.readiness} /></header><Metrics values={[["Total additional cash", money(result.totals.cashRequiredISK)], ['Total economic profit', money(result.totals.economicProfitISK)], ['Shared spending wallet', money(result.totals.walletISK)], ['Net instant-sale revenue', money(result.totals.netRevenueISK)]]} /><p className="manufacturing-note">Materials: {money(result.totals.materialCashISK)} · Jobs and cash overhead: {money(result.totals.jobAndOverheadCashISK)}. {result.totals.affordable === null ? 'Combined affordability is unknown.' : result.totals.affordable ? 'The shared wallet covers the combined cash requirement.' : 'The shared wallet cannot cover the combined cash requirement.'}</p><div className="manufacturing-table-wrap"><table><caption>Combined shopping list — stock allocated once</caption><thead><tr><th>Material</th><th>Required</th><th>Stock allocated</th><th>Buy</th><th>Cash</th><th>Coverage</th></tr></thead><tbody>{result.shoppingList.map(item => <tr key={item.typeId}><th scope="row">{item.name}</th><td>{quantity(item.requiredQuantity)}</td><td>{quantity(item.ownedAllocatedQuantity)}</td><td>{quantity(item.missingQuantity)}</td><td>{money(item.purchaseISK)}</td><td>{item.coverage}</td></tr>)}</tbody></table></div><div className="manufacturing-table-wrap"><table><caption>Combined outputs — shared demand</caption><thead><tr><th>Product</th><th>Quantity</th><th>Gross revenue</th><th>Coverage</th></tr></thead><tbody>{result.outputs.map(item => <tr key={item.typeId}><th scope="row">{item.name}</th><td>{quantity(item.quantity)}</td><td>{money(item.grossRevenueISK)}</td><td>{item.coverage}</td></tr>)}</tbody></table></div><ul className="manufacturing-note">{result.conditions.map((condition, index) => <li key={index}>{condition}</li>)}</ul></article>{result.jobs.map((card, index) => <details className="manufacturing-job-result" key={card.key}><summary>Job {index + 1}: {card.productName} · {card.readiness}</summary><Card card={card} /></details>)}</>;
+  return <><article className="manufacturing-result-card"><header><h3>Shared production plan</h3><Status value={result.readiness} /></header><Metrics values={[["Total additional cash", money(result.totals.cashRequiredISK)], ['Total economic profit', money(result.totals.economicProfitISK)], ['Shared spending wallet', money(result.totals.walletISK)], ['Net instant-sale revenue', money(result.totals.netRevenueISK)]]} /><p className="manufacturing-note">Materials: {money(result.totals.materialCashISK)} · Jobs and cash overhead: {money(result.totals.jobAndOverheadCashISK)}. {result.totals.affordable === null ? 'Combined affordability is unknown.' : result.totals.affordable ? 'The shared wallet covers the combined cash requirement.' : 'The shared wallet cannot cover the combined cash requirement.'}</p><ShoppingList lines={result.shoppingList} /><div className="manufacturing-table-wrap"><table><caption>Combined outputs — shared demand</caption><thead><tr><th>Product</th><th>Quantity</th><th>Gross revenue</th><th>Coverage</th></tr></thead><tbody>{result.outputs.map(item => <tr key={item.typeId}><th scope="row">{item.name}</th><td>{quantity(item.quantity)}</td><td>{money(item.grossRevenueISK)}</td><td>{item.coverage}</td></tr>)}</tbody></table></div><ul className="manufacturing-note">{result.conditions.map((condition, index) => <li key={index}>{condition}</li>)}</ul></article>{result.jobs.map((card, index) => <details className="manufacturing-job-result" key={card.key}><summary>Job {index + 1}: {card.productName} · {card.readiness}</summary><Card card={card} /></details>)}</>;
 }
 
 export default function ManufacturingPanel({ characters, openConnections, demo = false }: { characters: Character[]; openConnections: () => void; demo?: boolean }) {

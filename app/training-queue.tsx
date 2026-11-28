@@ -1,6 +1,7 @@
 'use client';
 import { useId, useState } from 'react';
 import { CountBars, QueueTimeline } from './analytics-charts';
+import TrainingCoverage from './training-queue-coverage';
 import type { CharacterQueueAnalytics, CharacterQueueEntry } from './lib/character-analytics-types';
 
 const dayMs = 86400000;
@@ -53,6 +54,7 @@ export default function TrainingQueue({ queue }: { queue: CharacterQueueAnalytic
     <CountBars title="Reported queue schedule · all returned entries" unit="entries" rows={(Object.keys(bucketLabels) as Bucket[]).map(key => ({ label: bucketLabels[key], value: counts[key] }))}/>
     <p className="overview-hint">The six groups are disjoint: elapsed includes the assessment instant; each future group includes its upper boundary. Missing finish dates stay separate. Counts describe returned entries only.</p>
     <TrainingFinishChart schedule={schedule} selectDay={selectDay}/>
+    <TrainingCoverage entries={queue.entries} asOf={schedule.asOf}/>
     <h4>Inspect reported queue entries</h4><p className="overview-hint">Filters change only this timeline and table. Summary counts and the daily chart above always cover the full returned queue. Filtering makes no new request.</p>
     <div className="overview-controls"><div><label htmlFor={id + '-bucket'}>Schedule group</label><select id={id + '-bucket'} value={filter} onChange={event => { setFilter(event.target.value as Filter); setDate(''); setPage(0); }}><option value="all">All returned entries</option><option value="next30d">Future finishes within 30 days</option>{(Object.keys(bucketLabels) as Bucket[]).map(key => <option key={key} value={key}>{bucketLabels[key]}</option>)}</select></div>
       <div><label htmlFor={id + '-date'}>Date from the 30-day chart</label><select id={id + '-date'} value={date} onChange={event => { if (event.target.value) selectDay(event.target.value); else { setDate(''); setPage(0); } }}><option value="">Any date in the selected group</option>{schedule.daily.map(row => <option key={row.date} value={row.date}>{row.date} UTC · {row.entries} entries</option>)}</select></div>

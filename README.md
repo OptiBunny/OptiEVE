@@ -15,6 +15,7 @@ A private, read-only overview and connector for EVE Online character and corpora
 | `character_freelance_report` | One character’s returned freelance participation list, bounded job previews and optional explicitly selected own participation |
 | `character_calendar_report` | One calendar-summary batch with response and date-window counts, a bounded UTC schedule and explicit continuation evidence |
 | `wallet_activity_report` | One journal page’s cash-flow totals and categories, with the latest thirty returned UTC dates and explicit omissions |
+| `historical_orders_report` | One page of personal historical orders, with state and side counts, leading item types, UTC issue dates and explicit omissions |
 | `open_orders_report` | Separate remaining bid/asking values, full-response expiry evidence and bounded type/order previews |
 | `read_private_data` | One page of orders, assets, wallet transactions or wallet journal |
 | `contracts_report` | One contracts-page briefing with status/type counts and up to twenty upcoming offer expirations |
@@ -46,9 +47,15 @@ The application cannot place orders, change prices, move assets or spend ISK. Co
 
 ## Workspace navigation
 
-The twenty-two workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
+The twenty-three workspaces are grouped under Character, Finance, Operations and Setup. Larger layouts show grouped buttons; compact layouts offer the same destinations in a native selector. Changing workspaces keeps each view's existing loading controls. Leaving a data workspace clears its displayed results through the existing unmount behavior. Navigation choices are not stored, and switching views does not enable history or start a background collector.
 
 Character detail and corporation workspace results keep data coverage separate from cache freshness. A response with missing or unsupported cache-expiry evidence, or one that has expired by the time the load finishes, stays visibly partial while its accepted rows remain available. Optional public type/system labels have their own cache evidence; a fresh private response does not make those labels fresh. Cache age does not establish current game state or complete ownership.
+
+## Personal historical orders
+
+Open **Finance → Historical orders**, select a character and load a source page. EVE supplies up to 90 days of cancelled and expired orders. The dashboard excludes orders marked as corporation orders. Search by item name or type ID and filter by side or state within the loaded page. The table shows 100 matching rows at a time. Loading another source page is a separate request.
+
+In ChatGPT, ask “Summarize page 1 of my historical market orders. Which item types appear most often, and how many orders expired?” The `historical_orders_report` tool accepts an owned `characterId` and an optional `page` from 1 to 500. It returns counts for the selected page, up to 20 item types and the latest 30 UTC issue dates, with counts of omitted groups. Issue dates identify when orders were placed. Closure times, fills and sale proceeds cannot be derived from this history. It uses the existing character market-order read permission. [CCP API Explorer](https://developers.eveonline.com/api-explorer#/operations/GetCharactersCharacterIdOrdersHistory)
 
 ## Regional market history
 
@@ -132,6 +139,8 @@ The additive migration in `drizzle/` must be applied before this Worker version 
 
 The Manufacturing workspace supports public product search, owned blueprint pages, individual assessments, candidate comparison and a combined production/shopping plan. Select the connected character, personal or corporation resources, market, facility and explicit cost assumptions before loading. Blank costs mean unknown; enter zero only when that assumption is intended. Inputs and results remain in memory and clear when the context changes or the workspace is left. The same operations are available through the MCP tools using existing read permissions.
 
+The combined shopping plan ranks fully quoted material shortfalls by the total ISK needed to buy each missing quantity. Lines with incomplete quotes or unknown quantities stay separate, as do materials covered by stock. Each assessed job shows its economic break-even in net receipts per output unit and the additional cash required per output. Both divide the corresponding batch total by the number of outputs. Recurring values use an exact fraction.
+
 Comparison accepts one shared context and up to five jobs. Rankings compare modeled instant-sale economic profit for qualifying alternatives at their selected batch sizes; they are not profit-per-hour rankings or a jointly funded portfolio. The combined plan allocates stock and verified blueprint-copy runs in submitted job order, totals upfront cash against one wallet, and quotes aggregated material deficits and output quantities against shared market depth. It does not count planned output as available input stock, future sales as funding, or an original blueprint as multiple concurrent job slots. Missing costs, incomplete depth and uncertain evidence remain visible.
 
 Open `/demo` to explore the same workspace with clearly labeled synthetic fixtures, including missing evidence and limited-resource scenarios. It makes no EVE, account-status or manufacturing API requests and stores no inputs or results. Demo values are examples, never live prices or account evidence. The deployment's existing audience policy still applies to this route.
@@ -206,11 +215,15 @@ EVE’s contracts endpoints cover contracts involving the selected issuer, accep
 
 The skill explorer makes every returned skill reachable in 100-row pages. Search by skill name, group name or type ID, and combine exact group, trained level, active level and active-versus-trained filters. Equal group names do not merge distinct group IDs; unmapped groups remain separate. The SP chart shows the largest twenty returned groups, while the group selector includes them all. Selecting a group or level chart label replaces the table filters with that selection. Charts retain full-response totals, and filters reset when the report or character changes. These controls make no additional reads and save no selections.
 
+The training view measures gaps and overlaps in reported queue intervals within the next 30 days. It shows up to 20 internal gaps and 20 overlaps. Incomplete or reversed intervals stay unclassified. Time before the first or after the last reported interval does not establish a queue gap.
+
 The training queue also shows disjoint schedule buckets: finish dates already elapsed, the next 24 hours, over 24 hours through seven days, over seven through thirty days, later dates, and missing finish dates. All buckets use the same report-completion timestamp; a date exactly at the boundary belongs to the earlier bucket. The next-thirty-days chart places reported finish dates on a UTC calendar axis and leaves days without dated entries unfilled. Missing dates can hide additional planned work, and a passed finish is not confirmed completion. Local bucket/date/skill filters show the first 20 matching timeline entries and 100-row table pages; the charts continue to cover the full returned queue. Filters clear on a new result or character selection.
 
 In the private chat, `character_training_report` requests those same three feeds for one owned character. It returns SP and level summaries, the ten largest reported skill groups, schedule counts and daily planned finishes, the first twenty upcoming queue entries, and attributes/remap metadata. Omitted group and future-entry counts remain explicit. Section permissions and freshness stay separate; no active-training state, current in-training SP, SP/hour, remap readiness or confirmed completion is inferred. This report adds no history, settings, permission requests or game writes.
 
 **Wallet activity** shows daily incoming/outgoing ISK, net cash flow and fixed activity categories for one explicitly selected journal page. Choose either the character wallet or one corporation wallet division. Amounts are summed with exact integer arithmetic on the received JSON numbers' decimal representations; prior provider or JSON parsing precision cannot be recovered. Missing amounts remain unknown, and days without returned rows are omitted. Transfers are included as movements, so these charts do not establish profit, wealth or historical balances. Loading another page replaces the chart; no pages or accounts are combined. The application accepts at most 2,500 rows in one response. Raw journal entries, counterparties, descriptions, balances and tax fields are excluded from this dashboard's response.
+
+The wallet calendar distinguishes observed amounts, missing amounts and dates without an observation. The journal view is bounded by dates on the selected page. The saved-history view uses the selected report and retention window. Changing the calendar view makes no EVE read and does not capture history.
 
 A diverging daily net chart places outgoing-dominant dates left of zero and incoming-dominant dates right. It shows at most the latest thirty returned UTC dates, sharing a scale within that chart; tiny nonzero values receive a minimum visible marker and exact values remain in the table. Unknown totals, missing amounts and observed zero stay distinct. These are returned dates, not a complete thirty-day period. Every returned date remains available in the explorer’s day selector and paged exact-value table.
 
